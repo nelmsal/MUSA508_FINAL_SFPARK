@@ -1,0 +1,66 @@
+---
+title: "MUSA508_FINAL_SFPARK"
+date: "December 10, 2021"
+editor_options: 
+  chunk_output_type: console
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: "hide"
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+## Use Case & Motivation
+*Motivate the analysis – “What is the use case; why would someone want to
+replicate your analysis and why would they use this approach?”*
+
+## Method
+*What is the spatial or space/time process?*
+
+``` {r intro}
+```
+
+# 1. Data
+*Describe the data you used.*
+
+``` {r data}
+```
+
+# 2. Exploratory Data Analysis
+*Describe your exploratory analysis using maps and plots.*
+
+``` {r EDA}
+```
+
+# 3. Model
+*Describe your modeling approach and show how you arrived at your final
+model.*
+
+``` {r model}
+```
+
+# 4. Validation / Goodness of Fit
+
+``` {r fit}
+```
+
+## 4.1 CV
+*Validate your model with cross-validation and describe how your predictions
+are useful (accuracy vs. generalizability).*
+
+## 4.2 Map & Visualizations
+*Provide additional maps and data visualizations to show that your model is
+useful.*
+
+# Conclusion
+## Use Case Results
+*Talk about how your analysis meets the use case you set out to address.*
+
+## Improvements
+*What could you do to make the analysis better?*
