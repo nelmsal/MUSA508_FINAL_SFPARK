@@ -16,6 +16,13 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Introduction
+### PROMPT
+
+**Project option 7: Forecasting parking demand What drives parking demand
+(revenues)?** 
+If you knew, could you create a tool that would predict parking demand over
+time and space. Using San Francisco open parking data (locations), forecast parking demand as a function of built environment, neighborhood and road characteristics. Lots of app use cases possible depending if the user is public or private sector. There are 105m rows here – so you’ll have to use the API to download a small slice of the data.
+
 ## Use Case & Motivation
 *Motivate the analysis – “What is the use case; why would someone want to
 replicate your analysis and why would they use this approach?”*
@@ -24,13 +31,163 @@ replicate your analysis and why would they use this approach?”*
 *What is the spatial or space/time process?*
 
 ``` {r intro}
+library(tidyverse)
+library(sf)
+library(lubridate)
+library(tigris)
+library(tidycensus)
+library(viridis)
+library(riem)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(RSocrata)
+library(glue)
 ```
 
 # 1. Data
 *Describe the data you used.*
 
+## 1.1 Import
+``` {r data_import_park}
+# https://data.sfgov.org/Transportation/SFMTA-Parking-Meter-Detailed-Revenue-Transactions/imvp-dq3v
+
+park.cols = c(
+'TRANSMISSION_DATETIME'='id.park',
+#A system-generated unique identifier for the transaction record
+
+'POST_ID'='id.meter',
+#The identifier of the meter this transaction is related to. See the related meters dataset including locations https://data.sfgov.org/d/8vzz-qzz9
+
+'STREET_BLOCK'='id.block',
+#The name of the street block the meter sits on
+
+'PAYMENT_TYPE'='payment.type',
+#How the customer paid, one of the following: CASH, CREDIT CARD, SMART CARD
+
+'SESSION_START_DT'='date.start',
+#The date and time of the start of the meter session for this transaction by the customer
+
+'SESSION_END_DT'='date.end',
+#The date and time of the end of the meter session for this transaction by the customer
+
+'METER_EVENT_TYPE'='event',
+#Event type of the meter, one of the following: NS = New Session; AT = Addtional Time; SC = Status Change
+
+'GROSS_PAID_AMT'='payment'
+#The amount paid by the customer for this meter transaction
+
+)
+
+API.park.base = "https://data.sfgov.org/resource/imvp-dq3v.json"
+API.park.fields = paste(c(names(park.cols)), collapse=', ')
+API.park.fields = glue("$select={API.park.fields}")
+date_field = 'SESSION_START_DT'
+start_date = "2019-01-01T00:00:00.000"
+end_date = "2020-01-01T00:00:00.000"
+API.park.dates = glue("$where={date_field} between '{start_date}' and '{end_date}'")
+API.park.url = paste(
+  API.park.dates,
+  #API.park.fields,
+  sep=''
+) %>% URLencode(.)
+park.data = read.socrata(paste(API.park.base,API.park.url, sep='?'))
+```
+
+``` {r data_import_meter}
+
+meter.cols = c(
+'OBJECTID'='OBJECTID',
+#
+'PARKING_SPACE_ID'='id.park',
+# Parking Space ID, connected to the physical location rather than the meter
+'POST_ID'='id.meter',
+# Unique identifier of meter
+'MS_PAY_STATION_ID'='MS_PAY_STATION_ID',
+#
+'MS_SPACE_NUM'='MS_SPACE_NUM',
+#
+'SENSOR_FLAG'='SENSOR_FLAG',
+# If there was an active occupancy sensor located at the space during the SFpark pilot (until Dec 2013)--N- No,Y - Yes
+'ON_OFFSTREET_TYPE'='ON_OFFSTREET_TYPE',
+# Whether the space is on the street or off‐street, e.g. metered parking lot--OFF Off‐street,ON On‐street
+'OSP_ID'='OSP_ID',
+# Unique identifier of SFMTA‐owned off‐street parking space--Null - Meter located on‐street,890 - Pier 48 Lot,891 - Pier 52 Lot,892 - Pier 1/2 Motorcycle Lot,901 - 24th and Capp Lot,902 - California and Steiner Lot,903 - 8th and Clement Lot,904 - 9th and Clement Lot,905 - Castro Theater Lot,906 - 18th and Collingwood Lot,907 - Mission and Norton Lot,908 - 21st and Geary Lot,909 - 18th and Geary Lot,910 - 20th and Irving Lot,911 - 8th and Irving Lot,913 - 7th and Irving Lot,914 - Junipero Serra and Ocean Lot,915 - 19th and Ocean Lot,916 - Pierce Street Garage,918 - 24th and Noe Lot,919 - Felton and San Bruno Lot,920 - SF General Hospital Lot,922 - West Portal Lot,923 - Claremont and Ulloa Lot,924 - Phelan Loop Lot
+'JURISDICTION'='JURISDICTION',
+# Agency which manages the meter--PORT - Port of San Francisco,SFMTA - San Francisco Municipal Transportation Agency
+'PM_DISTRICT_ID'='PM_DISTRICT_ID',
+# Parking Management District ID
+'BLOCKFACE_ID'='BLOCKFACE_ID',
+# Blockface (side of street) ID
+'ACTIVE_METER_FLAG'='ACTIVE_METER_FLAG',
+# Status of meter--M - Active,T - Temporarily inactive
+'REASON_CODE'='REASON_CODE',
+#
+'SMART_METER_FLAG'='SMART_METER_FLAG',
+#
+'METER_TYPE'='METER_TYPE',
+# How many spaces the meter manages-SS - Single‐space,MS - Multi‐space
+'METER_VENDOR'='METER_VENDOR',
+# Meter vendor
+'METER_MODEL'='METER_MODEL',
+# Meter model
+'CAP_COLOR'='CAP_COLOR',
+# Cap color describes the use and restrictions of the meter--Black - Motorcycle parking,Brown - Tour bus parking,Green - Short term parking,Grey - General metered parking,Purple - Boat trailer parking,Red - Six wheeled commercial vehicle parking,Yellow - Commercial vehicle parking
+'PCO_BEAT'='PCO_BEAT',
+#
+'OLD_RATE_AREA'='OLD_RATE_AREA',
+# Hourly rate zone of the meter; some variations within each zone--Area 1 - Downtown primarily; 3.50,Area 2 -Surrounding downtown primarily; 3.00,Area 3 -Residential neighborhood primarily; 2.00,Area 5 -SFpark area variable rates ranging from; 0.25 to; 6.00,MC1 -Motorcycle in Area 1 primarily; 0.70,MC2 -Motorcycle in Area 2 primarily; 0.60,MC3 -Motorcycle in Area 3 primarily; 0.40,MC5 -Motorcycle in SFpark area variable rates ranging from; 0.25 to; 6.00,Port 1 -Port‐owned at Fisherman’s Wharf; 2.50,Port 2 -Port‐owned at Fisherman’s Wharf; 2.50,Port 3 -Port‐owned at North Embarcadero; 2.00,Port 4 -Port‐owned at North Embarcadero; 2.00,Port 5 -Port‐owned at Downtown; 3.00,Port 6 -Port‐owned at Downtown; 3.00,Port 7 -Port‐owned at Downtown; 3.00,Port 8 -Port‐owned at Downtown; 3.00,Port 9 -Port‐owned at South Embarcadero; 1.00,Port 10 -Port‐owned at South Embarcadero; 1.00,Port 11 -Port‐owned at South Embarcadero; 1.00,Port 12 -Port‐owned at South Embarcadero; 1.00,PortMC1 -Port‐owned motorcycle rate; 0.25,PortMC2 -Port‐owned motorcycle rate at Ferry Building; 0.50,Tour Bus -; 9.00 for two hours
+'STREET_ID'='STREET_ID',
+# Street identifier
+'STREET_NAME'='STREET_NAME',
+# Street name
+'STREET_NUM'='STREET_NUM',
+# Approximate street  of meter
+'PARITY_DIGIT_POSITION'='PARITY_DIGIT_POSITION',
+#
+'STREET_SEG_CTRLN_ID'='STREET_SEG_CTRLN_ID',
+# Street segment centerline identifier
+'ORIENTATION'='ORIENTATION',
+#
+'LONGITUDE'='LONGITUDE',
+# Longitude of meter
+'LATITUDE'='LATITUDE',
+# Latitude of meter
+'LEGISLATION_REF'='LEGISLATION_REF',
+#
+'LEGISLATION_DT'='LEGISLATION_DT',
+#
+'WORK_ORDER'='WORK_ORDER',
+# Work order
+'COMMENTS'='COMMENTS',
+#
+'COLLECTION_ROUTE'='COLLECTION_ROUTE',
+#
+'COLLECTION_SUBROUTE'='COLLECTION_SUBROUTE',
+#
+'PMR_ROUTE'='PMR_ROUTE',
+#
+'NFC_KEY'='NFC_KEY',
+#
+'SPT_CODE'='SPT_CODE',
+#
+'COLLECTION_ROUTE_DESC'='COLLECTION_ROUTE_DESC',
+#
+'COLLECTION_SUBROUTE_DESC'='COLLECTION_SUBROUTE_DESC',
+#
+'shape'='shape'
+#
+  )
+
+
+API.meter.url = "https://data.sfgov.org/resource/imvp-dq3v.json"
+meter.data = read.socrata(API.meter.url)
+```
+
+
 ``` {r data}
 ```
+
 
 # 2. Exploratory Data Analysis
 *Describe your exploratory analysis using maps and plots.*
