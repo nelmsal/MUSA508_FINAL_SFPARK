@@ -80,30 +80,38 @@ park.cols = c(
 )
 
 API.park.base = "https://data.sfgov.org/resource/imvp-dq3v.json"
+
 API.park.fields = paste(c(names(park.cols)), collapse=', ')
 API.park.fields = glue("$select={API.park.fields}")
+
 date_field = 'SESSION_START_DT'
 start_date = "2019-01-01T00:00:00.000"
 end_date = "2020-01-01T00:00:00.000"
 API.park.dates = glue("$where={date_field} between '{start_date}' and '{end_date}'")
+
+API.park.add = paste(
+    API.park.dates,
+    API.park.fields,
+    sep='?'
+  ) %>% URLencode(.)
 API.park.url = paste(
-  API.park.dates,
-  #API.park.fields,
-  sep=''
-) %>% URLencode(.)
-park.data = read.socrata(paste(API.park.base,API.park.url, sep='?'))
+    API.park.base,
+    API.park.add,
+    sep='?'
+  ) %>% URLencode(.)
+park.data = read.socrata(API.park.url)
 ```
 
 ``` {r data_import_meter}
 
 meter.cols = c(
-'OBJECTID'='OBJECTID',
+'OBJECTID'='        id.object',
 #
-'PARKING_SPACE_ID'='id.park',
+'PARKING_SPACE_ID'= 'id.park',
 # Parking Space ID, connected to the physical location rather than the meter
 'POST_ID'='id.meter',
 # Unique identifier of meter
-'MS_PAY_STATION_ID'='MS_PAY_STATION_ID',
+'MS_PAY_STATION_ID'='id.paystation',
 #
 'MS_SPACE_NUM'='MS_SPACE_NUM',
 #
@@ -184,6 +192,14 @@ API.meter.url = "https://data.sfgov.org/resource/imvp-dq3v.json"
 meter.data = read.socrata(API.meter.url)
 ```
 
+## Meter Filters
+
+occupied rate = 80%
+
+find threshold:
+ - appropriate usage Rate by hour
+
+Time Limit = 240 min (9am to 10pm)
 
 ``` {r data}
 ```
