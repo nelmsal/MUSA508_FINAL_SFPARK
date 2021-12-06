@@ -92,7 +92,7 @@ API.park.dates = glue("$where={date_field} between '{start_date}' and '{end_date
 API.park.add = paste(
     API.park.dates,
     API.park.fields,
-    sep='?'
+    sep='&'
   ) %>% URLencode(.)
 API.park.url = paste(
     API.park.base,
@@ -105,7 +105,7 @@ park.data = read.socrata(API.park.url)
 ``` {r data_import_meter}
 
 meter.cols = c(
-'OBJECTID'='        id.object',
+'OBJECTID'='id.object',
 #
 'PARKING_SPACE_ID'= 'id.park',
 # Parking Space ID, connected to the physical location rather than the meter
