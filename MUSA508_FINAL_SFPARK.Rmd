@@ -2,7 +2,7 @@
 title: "MUSA508_FINAL_SFPARK"
 date: "December 10, 2021"
 editor_options: 
-  chunk_output_type: console
+  chunk_output_type: inline
 output: 
   html_document:
     toc: true
