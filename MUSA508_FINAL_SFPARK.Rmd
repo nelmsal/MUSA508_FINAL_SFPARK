@@ -20,15 +20,44 @@ knitr::opts_chunk$set(echo = TRUE)
 
 **Project option 7: Forecasting parking demand What drives parking demand
 (revenues)?** 
+
 If you knew, could you create a tool that would predict parking demand over
 time and space. Using San Francisco open parking data (locations), forecast parking demand as a function of built environment, neighborhood and road characteristics. Lots of app use cases possible depending if the user is public or private sector. There are 105m rows here – so you’ll have to use the API to download a small slice of the data.
 
 ## Use Case & Motivation
-*Motivate the analysis – “What is the use case; why would someone want to
-replicate your analysis and why would they use this approach?”*
+*Motivate the analysis*
+*What is the use case?*
+
+X-Parks-the-Spot is an app that finds the perfect parking spot for the user. The perfect parking spot, to put it bluntly, is the that's availible closest to the user's destinaton. Currently, the app only operates in the pilot city of San Francisco, due to the city's availibility of data. 
+
+The current version of the X-Parks-the-Spot app provides the user with the block of parking spots that has the highest probability of having an open spot, considering the user's:
+
+1. destination neighborhood, 
+
+2. day of the week, and 
+
+3. time period of the day.
+
+The development team formed a prediction model based on 2019 parking meter transactions in the City of San Francisco. Specifically, this is a binomial logistic model that predicts if the block's occupancy rate -- e.g. the aggregated occupation time of all the block's parking meters over the aggregated possible time -- will be lower or higher than 80%. 80% is the preferred threshold based on parking literature and that it is rate that San Francisco's parking project (SF Park) uses to price meters.
+
+The model is fitted on the observed parking meter transactions of 2019's blocks . A few predictor variables to help predict the occupation.
+
+*Why would someone want to replicate your analysis? Why would they use this approach?*
+
+This approach is helpful as it gives the user a probability for their likelihood to find parking.
 
 ## Method
 *What is the spatial or space/time process?*
+
+The general method is to 
+
+1. prepare data that gives us the occupancy rates for blocks of meters by time of day, 
+
+2. find variables that can predict the occupancy rate,
+
+3. fit a model based on the occupancy rates
+
+4. evaluate the fit of the model
 
 ``` {r intro}
 library(tidyverse)
@@ -48,7 +77,20 @@ library(glue)
 # 1. Data
 *Describe the data you used.*
 
+The observations are parking meter transactions from the City of San Franscisco for the year 2019. First, the meter transactions are aggregated by the meter, day, and time period (e.g. 9am to noon) to find (1) the amount of time occupied, and (2) the total possible meter time. Secondly, those grouped meter observations are then aggregated by the street block -- giving the block's total time occupied. 
+
+Since the dataset is a large and publicly administered, the transactions and time periods have to be filtered to only show:
+
+1. meters for general use (e.g. no motorcycle or commercial parking),
+
+2. transactions that are not used for testing or adminstration, or
+
+3. time periods that have meters in use (e.g. not on a holiday or shutdown for construction).
+
 ## 1.1 Import
+
+
+
 ``` {r data_import_park}
 # https://data.sfgov.org/Transportation/SFMTA-Parking-Meter-Detailed-Revenue-Transactions/imvp-dq3v
 
