@@ -38,8 +38,9 @@ def get_starts_ends(park_df, final_cols = ['trans_id','time','action'], bins = [
     bins_df = pd.DataFrame(bin_list, columns=final_cols)
     start_ends = pd.concat([starts, ends, bins_df]).sort_values(['trans_id','time']).reset_index(drop=True)
     return start_ends
-start_ends = get_starts_ends(park19, bins = [7, 9, 12, 15, 18, 21], final_cols=final_cols)
 
-path = r'C:\Users\nelms\Documents\Penn\MUSA-508\MUSA508_FINAL_SFPARK\meter_starts_ends.parquet'
+start_ends = get_starts_ends(park19[park19['day']<=32], bins = [7, 9, 12, 15, 18, 21], final_cols=final_cols)
+
+path = r'C:\Users\nelms\Documents\Penn\MUSA-508\MUSA508_FINAL_SFPARK\meter_starts_ends_Jan.parquet'
 start_ends.to_parquet(path, engine='pyarrow')
 print('exported')

@@ -61,7 +61,7 @@ def get_times(row):
         start_ends = np.reshape(start_ends, (round(len(start_ends)/2), 2))
 
         start_ends = [round_down(end-start,3) for start,end in start_ends]
-        return pd.Series((sum(start_ends), len(start_ends)), index=cols)
+        return pd.Series((sum(start_ends)), index=cols) #, len(start_ends)), index=cols)
 
     except:
         #print(row[['time', 'action']].values.tolist())

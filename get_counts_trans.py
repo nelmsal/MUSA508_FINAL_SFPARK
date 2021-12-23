@@ -1,15 +1,17 @@
 import pandas as pd
 import numpy as np
+import dask
 import dask.dataframe as dd
 
-path = r'C:\Users\nelms\Documents\Penn\MUSA-508\MUSA508_FINAL_SFPARK\meter_starts_ends.parquet'
-trans_day_actions = dd.read_parquet(path).set_index('trans_id') #.persist()
+path = r'C:\Users\nelms\Documents\Penn\MUSA-508\MUSA508_FINAL_SFPARK\meter_starts_ends_Jan.parquet'
+#path = r'C:\Users\nelms\Documents\Penn\MUSA-508\MUSA508_FINAL_SFPARK\meter_starts_ends.parquet'
+trans_day_actions = dd.read_parquet(path).set_index('trans_id').persist()
 
 # #############
 
 # unique_list = list(hours_actions_df.index.unique().compute())
 # hours_actions_df = hours_actions_df.repartition(divisions=sorted(unique_list + [unique_list[-1]]))
-# print(trans_day_actions.npartitions)
+print(trans_day_actions.npartitions)
 
 #################
 
@@ -88,11 +90,13 @@ def grouper(row, cut_off_time=9):
     return pd.DataFrame(keep, columns=['time','action'])
 
 #trans_day_actions = hours_actions_df.map_partitions(grouper, meta={'time': 'int64', 'action': 'str'})
-trans_day_actions = trans_day_actions.groupby('trans_id')[['time','action']].apply(grouper, meta={'time': 'int64', 'action': 'str'})
-trans_day_actions = trans_day_actions #.persist()
+trans_day_actions = trans_day_actions.groupby('trans_id')[['time','action']].apply(grouper, meta={'time': 'f8', 'action': 'str'})
+trans_day_actions = trans_day_actions.persist()
 
 print('after function')
 
-path = r'C:\Users\nelms\Documents\Penn\MUSA-508\MUSA508_FINAL_SFPARK\meter_trans_day_clean.parquet'
-trans_day_actions.to_parquet(path, engine='pyarrow')
-print('exported')
+# path = r'C:\Users\nelms\Documents\Penn\MUSA-508\MUSA508_FINAL_SFPARK\meter_trans_day_clean_q1.csv'
+# trans_day_actions.to_csv(path)
+saved = trans_day_actions.to_csv("C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/csv_counts_trans/*", compute=False)
+_, l = dask.compute(saved, trans_day_actions.size)
+print(l)

@@ -1,6 +1,7 @@
 ---
 title: "MUSA508_FINAL_SFPARK"
-date: "December 10, 2021"
+author: "Alexander Nelms & Gianluca Mangiapane"
+date: "December 17, 2021"
 editor_options: 
   chunk_output_type: inline
 output: 
@@ -12,54 +13,28 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(bookdown)
+knitr::opts_chunk$set(
+  echo=TRUE,
+  include=TRUE,
+  warning=FALSE,
+  messages=FALSE,
+  fig.width = 8,
+  fig.keep = 'all',
+  collapse=TRUE,
+  cache=TRUE, 
+  autodep=TRUE,
+  results=FALSE
+  )
+options(tigris_class = "sf")
+options(scipen = 999)
 ```
 
 # Introduction
-### PROMPT
+**Project option 7: Forecasting parking demand**
 
-**Project option 7: Forecasting parking demand What drives parking demand
-(revenues)?** 
+``` {r intro, include=FALSE}
 
-If you knew, could you create a tool that would predict parking demand over
-time and space. Using San Francisco open parking data (locations), forecast parking demand as a function of built environment, neighborhood and road characteristics. Lots of app use cases possible depending if the user is public or private sector. There are 105m rows here – so you’ll have to use the API to download a small slice of the data.
-
-## Use Case & Motivation
-*Motivate the analysis*
-*What is the use case?*
-
-X-Parks-the-Spot is an app that finds the perfect parking spot for the user. The perfect parking spot, to put it bluntly, is the that's availible closest to the user's destinaton. Currently, the app only operates in the pilot city of San Francisco, due to the city's availibility of data. 
-
-The current version of the X-Parks-the-Spot app provides the user with the block of parking spots that has the highest probability of having an open spot, considering the user's:
-
-1. destination neighborhood, 
-
-2. day of the week, and 
-
-3. time period of the day.
-
-The development team formed a prediction model based on 2019 parking meter transactions in the City of San Francisco. Specifically, this is a binomial logistic model that predicts if the block's occupancy rate -- e.g. the aggregated occupation time of all the block's parking meters over the aggregated possible time -- will be lower or higher than 80%. 80% is the preferred threshold based on parking literature and that it is rate that San Francisco's parking project (SF Park) uses to price meters.
-
-The model is fitted on the observed parking meter transactions of 2019's blocks . A few predictor variables to help predict the occupation.
-
-*Why would someone want to replicate your analysis? Why would they use this approach?*
-
-This approach is helpful as it gives the user a probability for their likelihood to find parking.
-
-## Method
-*What is the spatial or space/time process?*
-
-The general method is to 
-
-1. prepare data that gives us the occupancy rates for blocks of meters by time of day, 
-
-2. find variables that can predict the occupancy rate,
-
-3. fit a model based on the occupancy rates
-
-4. evaluate the fit of the model
-
-``` {r intro}
 library(tidyverse)
 library(sf)
 library(lubridate)
@@ -71,211 +46,2574 @@ library(gridExtra)
 library(knitr)
 library(kableExtra)
 library(RSocrata)
+library(arrow)
 library(glue)
-```
+library(funModeling)
+library(patchwork)
+library(psych)
+library(data.table)
+library(broom)
+library(flextable)
+library(speedglm)
+library(caret)
 
-# 1. Data
+sf_crs = st_crs('EPSG:7132')
+
+percent_formatter = function(str, n=0) (str * 100) %>% round(n) %>% format(., big.mark = ",") %>% paste0(., "%")
+
+format_nums = function(num_input, digits = 2) ifelse(abs(num_input)>999,
+                      count_format(num_input),
+                      round_thresh(num_input, digits = digits,int_check = TRUE))
+
+
+
+plotTheme = theme(
+  plot.title =element_text(size=12),
+  plot.subtitle = element_text(size=8),
+  plot.caption = element_text(size = 6),
+  axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+  axis.text.y = element_text(size = 10),
+  axis.title.y = element_text(size = 10),
+  # Set the entire chart region to blank
+  panel.background=element_blank(),
+  plot.background=element_blank(),
+  #panel.border=element_rect(colour="#F0F0F0"),
+  # Format the grid
+  panel.grid.major=element_line(colour="#D0D0D0",size=.2),
+  axis.ticks=element_blank())
+
+
+round_str = function(str_num, digits=3) str_num %>% 
+        as.numeric() %>%
+        round(digits) %>% 
+        as.character() %>% 
+        str_replace(., "^0\\.", ".") %>%
+        str_remove(., "0+$")
+
+round_thresh = function(
+  field,
+  thresh = .001,
+  digits = 3,
+  int_check = FALSE,
+  commas = FALSE
+  ){
+  
+  if(is.null(field)){return('NULL')}
+  if(is.na(field)){return('NA')}
+  
+  thresh_str = 
+    paste('<', round_str(thresh, digits=digits), sep=' ')
+  
+  field_num = field %>% as.numeric()
+  
+  field_str = 
+    ifelse(
+      abs(field_num) < thresh,
+      thresh_str,
+      ifelse(
+        (int_check == TRUE & abs(field_num) >= 1),
+        field_num %>% round_str(digits=0),
+        field_num %>% round_str(digits=digits)
+        ))
+  
+  return(field_str)
+}
+
+
+mapTheme = theme(plot.title =element_text(size=12),
+                  plot.subtitle = element_text(size=8),
+                  plot.caption = element_text(size = 6),
+                  axis.line=element_blank(),
+                  axis.text.x=element_blank(),
+                  axis.text.y=element_blank(),
+                  axis.ticks=element_blank(),
+                  axis.title.x=element_blank(),
+                  axis.title.y=element_blank(),
+                  panel.background=element_blank(),
+                  panel.border=element_blank(),
+                  panel.grid.major=element_line(colour = 'transparent'),
+                  panel.grid.minor=element_blank(),
+                  legend.direction = "vertical", 
+                  legend.position = "right",
+                  plot.margin = margin(1, 1, 1, 1, 'cm'),
+                  legend.key.height = unit(1, "cm"), legend.key.width = unit(0.2, "cm"))
+
+plotTheme = function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 16,colour = "black"),
+    plot.subtitle = element_text(face="italic"),
+    plot.caption = element_text(hjust=0),
+    axis.ticks = element_blank(),
+    
+    panel.background = element_blank(),
+    panel.grid.major = element_line("grey80", size = 0.1),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.background = element_rect(fill = "grey80", color = "white"),
+    strip.text = element_text(size=12),
+    
+    axis.title = element_text(size=12),
+    axis.text = element_text(size=10),
+    
+    
+    plot.background = element_blank(),
+    
+    legend.background = element_blank(),
+    legend.title = element_text(colour = "black", face = "italic"),
+    legend.text = element_text(colour = "black", face = "italic"),
+    
+    strip.text.x = element_text(size = 14)
+  )
+}
+
+
+sf_to_labels = function(
+  sf_focus, label_field
+){
+  sf.focus.labels = 
+    sf_focus %>%
+    st_centroid(., of_largest_polygon = TRUE) %>% 
+    mutate(
+      lon = 
+        map_dbl(
+          geometry,
+          ~st_centroid(.x, 
+                       of_largest_polygon = TRUE,
+                       quiet = TRUE,)[[1]]),
+      lat = 
+        map_dbl(
+          geometry, 
+          ~st_centroid(.x, 
+                       of_largest_polygon = TRUE, 
+                       quiet = TRUE,)[[2]])
+    )
+  sf.focus.labels$label = sf.focus.labels[[label_field]]
+  return(sf.focus.labels %>% dplyr::select(label, lon, lat))
+}
+geom_text_sf = function(
+  sf.focus.labels,
+  fontface='bold', color='black',
+  check_overlap = TRUE, ...
+){
+  labels = 
+    geom_text(
+        data=sf.focus.labels, check_overlap=TRUE,
+        fontface=fontface, color=color,
+        aes(x=lon,y=lat, label=label,...))
+  return(labels)}
+
+
+palette5 = c("#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c")
+palette4 = c("#D2FBD4","#92BCAB","#527D82","#123F5A")
+palette2 = c("#6baed6","#08519c")
+
+```
+ 
+## Use Case & Motivation
+
+X-Parks-the-Spot is an app that finds the perfect parking spot for the user. The perfect parking spot, to put it bluntly, is the that's available closest to the user's destination. Currently, the app only operates in the pilot city of San Francisco, due to the city's availability of data. 
+
+The current version of the X-Parks-the-Spot app provides the user with the block of parking spots that has the highest probability of having an open spot, considering the user's:
+
+1. destination neighborhood, 
+
+2. day of the week, and 
+
+3. time period of the day (e.g. 9am to noon).
+
+The development team formed a prediction model based on 2019 parking meter transactions in the City of San Francisco. Specifically, this is a binomial logistic model that predicts if the block's occupancy rate -- e.g. the aggregated occupation time of all the block's parking meters over the aggregated possible time -- will be lower or higher than 50%. 50% Parking Meter Occupancy in a time period is a safe number to assume that there will be openings. 
+
+This approach is helpful as it gives the app user a safe estimate of what street park to park on. Our app's funding is based on both public & private investment; as a result, it is in our best interest to not waste an app user's time by checking multiple blocks for parking.
+
+## Method
+
+The general method is to 
+
+1. prepare data that gives us the occupancy rates for park of meters by time of day & block, 
+
+2. find variables that can predict the occupancy rate,
+
+3. fit a model based on the occupancy rates
+
+4. evaluate the fit of the model
+
+The goal is to find blocks that have the lowest probability of being below 50% occupancy for a time period. 
+
+Since there is a wide range of neighborhoods and time periods, we aim for the model to both be accurate and generalizable. If the model is generalizable enough, it could potentially be applied to future cities.   
+
+# Data
 *Describe the data you used.*
 
-The observations are parking meter transactions from the City of San Franscisco for the year 2019. First, the meter transactions are aggregated by the meter, day, and time period (e.g. 9am to noon) to find (1) the amount of time occupied, and (2) the total possible meter time. Secondly, those grouped meter observations are then aggregated by the street block -- giving the block's total time occupied. 
+The observations are parking meter transactions from the City of San Francisco for the year 2019. First, the meter transactions are aggregated by the meter, day, and time period (e.g. 9am to noon) to find (1) the amount of time occupied, and (2) the total possible meter time. Secondly, those grouped meter observations are then aggregated by the street block -- giving the block's total time occupied. 
 
-Since the dataset is a large and publicly administered, the transactions and time periods have to be filtered to only show:
+The dataset is fairly large, raw, and aggregated from parking meter vendors which requires a methodical cleaning process. Our focus only looks at meter transactions and time periods that are:
 
 1. meters for general use (e.g. no motorcycle or commercial parking),
 
-2. transactions that are not used for testing or adminstration, or
+2. transactions that are not used for testing or administration, 
 
-3. time periods that have meters in use (e.g. not on a holiday or shutdown for construction).
+3. time periods that are not charging for parking (e.g. not on a holiday or shutdown for construction).
 
-## 1.1 Import
+Besides cleaning the dependent variables, we will (1) import external predictors (e.g. census data) and (2) further engineer the parking transactions (e.g. lag time).
 
+## Import
+### Parking
 
+As foreshadowed, the bulk of this project was in cleaning up the parking transactions to be measured by both time periods and their blocks. The size of this cleaning required pre-processing to be performed in python scripts.
 
-``` {r data_import_park}
-# https://data.sfgov.org/Transportation/SFMTA-Parking-Meter-Detailed-Revenue-Transactions/imvp-dq3v
+Before grouping by districts, the meter transactions ranged in sizes from 3-10 million rows. The City of San Francisco has about 18,000 parking meters -- so measuring for all of 2019 makes it exponentially larger. 
 
-park.cols = c(
-'TRANSMISSION_DATETIME'='id.park',
-#A system-generated unique identifier for the transaction record
+The complicated cleaning process isn't the scale but organizing the transaction's start & end times. To bin by time periods, the start & end times have to first be cropped by the periods. Then the periods have to account for potentially overlapping transactions for the same meter. Before accounting for the overlaps, many meters would have time periods of over 100% occupation. 
 
-'POST_ID'='id.meter',
-#The identifier of the meter this transaction is related to. See the related meters dataset including locations https://data.sfgov.org/d/8vzz-qzz9
+The python scripts cleaned the transactions in this order:
 
-'STREET_BLOCK'='id.block',
-#The name of the street block the meter sits on
+1. remove likely administrative meters;
 
-'PAYMENT_TYPE'='payment.type',
-#How the customer paid, one of the following: CASH, CREDIT CARD, SMART CARD
+2. split each transaction into a start & stop row;
 
-'SESSION_START_DT'='date.start',
-#The date and time of the start of the meter session for this transaction by the customer
+3. aggregate these transactions by the meter & day;
 
-'SESSION_END_DT'='date.end',
-#The date and time of the end of the meter session for this transaction by the customer
+4. sort the start & stops so they can be (A) cleaned of overlaps, (B) split by time periods, (C) re-paired, & (D) measured in hours;
 
-'METER_EVENT_TYPE'='event',
-#Event type of the meter, one of the following: NS = New Session; AT = Addtional Time; SC = Status Change
+5. the measured transaction rows are then grouped by meter, time period, day, and, *finally*, by street block;
 
-'GROSS_PAID_AMT'='payment'
-#The amount paid by the customer for this meter transaction
+6. the script also adds bins if there weren't any transactions but there was parking allowed.
 
-)
+In python, the scripts primarily use the pandas and dask dataframe packages to manage the data. Originally the scripts processed in 1-5 hours *(arguably the lowest point of my semester was when they ran and I couldn't use my laptop)*, but were cut down to 5 minutes. 
 
-API.park.base = "https://data.sfgov.org/resource/imvp-dq3v.json"
+``` {r data_block_group}
 
-API.park.fields = paste(c(names(park.cols)), collapse=', ')
-API.park.fields = glue("$select={API.park.fields}")
+path =  'C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/block_count_occ.parquet'
+park.import = read_parquet(path)
 
-date_field = 'SESSION_START_DT'
-start_date = "2019-01-01T00:00:00.000"
-end_date = "2020-01-01T00:00:00.000"
-API.park.dates = glue("$where={date_field} between '{start_date}' and '{end_date}'")
+park.import = park.import %>% 
+  transmute(
+    id.block = block_id,
+    id.bdb = block_day_bin,
+    id.dist = dist_id,
+    bin = bin,
+    meters.list = meter_ids,
+    meters.count = meter_count,
+    day = day,
+    day.week = `day of week`,
+    date = date(date),
+    datetime = datetime,
+    t.hrs.occ = occ_hours,
+    t.hrs.tot = tot_hours,
+    t.pct.occ = occ_perc
+  ) %>%
+  mutate(
+    week = week(date),
+    month = month(date)
+  )
 
-API.park.add = paste(
-    API.park.dates,
-    API.park.fields,
-    sep='&'
-  ) %>% URLencode(.)
-API.park.url = paste(
-    API.park.base,
-    API.park.add,
-    sep='?'
-  ) %>% URLencode(.)
-park.data = read.socrata(API.park.url)
+park.last = 
+  park.import %>%
+  group_by(id.block) %>%
+  filter(datetime == max(datetime)) %>%
+  pull(id.bdb)
+park.first = 
+  park.import %>%
+  group_by(id.block) %>%
+  filter(datetime == min(datetime)) %>%
+  pull(id.bdb)
+
+park.import = 
+  park.import %>%
+    mutate(
+      first.bin = ifelse(
+        id.bdb %in% park.first,
+        TRUE, FALSE),
+      last.bin = ifelse(
+        id.bdb %in% park.last,
+        TRUE, FALSE),
+      )
+
+park.last = 
+  park.import %>%
+  group_by(id.block) %>%
+  filter(date == max(date)) %>%
+  pull(id.bdb)
+
+park.first = 
+  park.import %>%
+  group_by(id.block) %>%
+  filter(date == min(date)) %>%
+  pull(id.bdb)
+
+park.import = 
+  park.import %>%
+    mutate(
+      first.date = ifelse(
+        id.bdb %in% park.first,
+        TRUE, FALSE),
+      last.date = ifelse(
+        id.bdb %in% park.last,
+        TRUE, FALSE),
+      ) %>%
+  dplyr::select(-meters.list)
+
+rm(park.first)
+rm(park.last)
+
+glimpse(park.import)
 ```
 
-``` {r data_import_meter}
+### Block Geometry 
 
-meter.cols = c(
-'OBJECTID'='id.object',
-#
-'PARKING_SPACE_ID'= 'id.park',
-# Parking Space ID, connected to the physical location rather than the meter
-'POST_ID'='id.meter',
-# Unique identifier of meter
-'MS_PAY_STATION_ID'='id.paystation',
-#
-'MS_SPACE_NUM'='MS_SPACE_NUM',
-#
-'SENSOR_FLAG'='SENSOR_FLAG',
-# If there was an active occupancy sensor located at the space during the SFpark pilot (until Dec 2013)--N- No,Y - Yes
-'ON_OFFSTREET_TYPE'='ON_OFFSTREET_TYPE',
-# Whether the space is on the street or off‐street, e.g. metered parking lot--OFF Off‐street,ON On‐street
-'OSP_ID'='OSP_ID',
-# Unique identifier of SFMTA‐owned off‐street parking space--Null - Meter located on‐street,890 - Pier 48 Lot,891 - Pier 52 Lot,892 - Pier 1/2 Motorcycle Lot,901 - 24th and Capp Lot,902 - California and Steiner Lot,903 - 8th and Clement Lot,904 - 9th and Clement Lot,905 - Castro Theater Lot,906 - 18th and Collingwood Lot,907 - Mission and Norton Lot,908 - 21st and Geary Lot,909 - 18th and Geary Lot,910 - 20th and Irving Lot,911 - 8th and Irving Lot,913 - 7th and Irving Lot,914 - Junipero Serra and Ocean Lot,915 - 19th and Ocean Lot,916 - Pierce Street Garage,918 - 24th and Noe Lot,919 - Felton and San Bruno Lot,920 - SF General Hospital Lot,922 - West Portal Lot,923 - Claremont and Ulloa Lot,924 - Phelan Loop Lot
-'JURISDICTION'='JURISDICTION',
-# Agency which manages the meter--PORT - Port of San Francisco,SFMTA - San Francisco Municipal Transportation Agency
-'PM_DISTRICT_ID'='PM_DISTRICT_ID',
-# Parking Management District ID
-'BLOCKFACE_ID'='BLOCKFACE_ID',
-# Blockface (side of street) ID
-'ACTIVE_METER_FLAG'='ACTIVE_METER_FLAG',
-# Status of meter--M - Active,T - Temporarily inactive
-'REASON_CODE'='REASON_CODE',
-#
-'SMART_METER_FLAG'='SMART_METER_FLAG',
-#
-'METER_TYPE'='METER_TYPE',
-# How many spaces the meter manages-SS - Single‐space,MS - Multi‐space
-'METER_VENDOR'='METER_VENDOR',
-# Meter vendor
-'METER_MODEL'='METER_MODEL',
-# Meter model
-'CAP_COLOR'='CAP_COLOR',
-# Cap color describes the use and restrictions of the meter--Black - Motorcycle parking,Brown - Tour bus parking,Green - Short term parking,Grey - General metered parking,Purple - Boat trailer parking,Red - Six wheeled commercial vehicle parking,Yellow - Commercial vehicle parking
-'PCO_BEAT'='PCO_BEAT',
-#
-'OLD_RATE_AREA'='OLD_RATE_AREA',
-# Hourly rate zone of the meter; some variations within each zone--Area 1 - Downtown primarily; 3.50,Area 2 -Surrounding downtown primarily; 3.00,Area 3 -Residential neighborhood primarily; 2.00,Area 5 -SFpark area variable rates ranging from; 0.25 to; 6.00,MC1 -Motorcycle in Area 1 primarily; 0.70,MC2 -Motorcycle in Area 2 primarily; 0.60,MC3 -Motorcycle in Area 3 primarily; 0.40,MC5 -Motorcycle in SFpark area variable rates ranging from; 0.25 to; 6.00,Port 1 -Port‐owned at Fisherman’s Wharf; 2.50,Port 2 -Port‐owned at Fisherman’s Wharf; 2.50,Port 3 -Port‐owned at North Embarcadero; 2.00,Port 4 -Port‐owned at North Embarcadero; 2.00,Port 5 -Port‐owned at Downtown; 3.00,Port 6 -Port‐owned at Downtown; 3.00,Port 7 -Port‐owned at Downtown; 3.00,Port 8 -Port‐owned at Downtown; 3.00,Port 9 -Port‐owned at South Embarcadero; 1.00,Port 10 -Port‐owned at South Embarcadero; 1.00,Port 11 -Port‐owned at South Embarcadero; 1.00,Port 12 -Port‐owned at South Embarcadero; 1.00,PortMC1 -Port‐owned motorcycle rate; 0.25,PortMC2 -Port‐owned motorcycle rate at Ferry Building; 0.50,Tour Bus -; 9.00 for two hours
-'STREET_ID'='STREET_ID',
-# Street identifier
-'STREET_NAME'='STREET_NAME',
-# Street name
-'STREET_NUM'='STREET_NUM',
-# Approximate street  of meter
-'PARITY_DIGIT_POSITION'='PARITY_DIGIT_POSITION',
-#
-'STREET_SEG_CTRLN_ID'='STREET_SEG_CTRLN_ID',
-# Street segment centerline identifier
-'ORIENTATION'='ORIENTATION',
-#
-'LONGITUDE'='LONGITUDE',
-# Longitude of meter
-'LATITUDE'='LATITUDE',
-# Latitude of meter
-'LEGISLATION_REF'='LEGISLATION_REF',
-#
-'LEGISLATION_DT'='LEGISLATION_DT',
-#
-'WORK_ORDER'='WORK_ORDER',
-# Work order
-'COMMENTS'='COMMENTS',
-#
-'COLLECTION_ROUTE'='COLLECTION_ROUTE',
-#
-'COLLECTION_SUBROUTE'='COLLECTION_SUBROUTE',
-#
-'PMR_ROUTE'='PMR_ROUTE',
-#
-'NFC_KEY'='NFC_KEY',
-#
-'SPT_CODE'='SPT_CODE',
-#
-'COLLECTION_ROUTE_DESC'='COLLECTION_ROUTE_DESC',
-#
-'COLLECTION_SUBROUTE_DESC'='COLLECTION_SUBROUTE_DESC',
-#
-'shape'='shape'
-#
+For spatially visualizing the dataset, we pull in the street blocks geometries.
+
+``` {r data_meter}
+
+path = "C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/Blockfaces.geojson"
+
+park.blocks = 
+  st_read(path) %>% 
+  st_transform(sf_crs) %>%
+  #dplyr::select(sfpark_id, geometry) %>%
+  filter(
+    !is.na(sfpark_id) & 
+    sfpark_id %in% park.import$id.block
+    ) %>%
+  rename(
+    id.block = sfpark_id
   )
 
 
-API.meter.url = "https://data.sfgov.org/resource/imvp-dq3v.json"
-meter.data = read.socrata(API.meter.url)
+path = "C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/Planning Department Neighborhood Quadrants.geojson"
+
+SF.quad = st_read(path) %>% 
+  st_transform(sf_crs) %>%
+  dplyr::select(quad, geometry)
+
+park.blocks = 
+  st_join(
+    park.blocks %>%
+      dplyr::select(id.block, geometry),
+    SF.quad,
+    join = st_intersects,
+    left = TRUE,
+    largest = T
+  )
+
+park.import =
+  merge(
+    park.import,
+    park.blocks %>%
+      st_drop_geometry(),
+    by='id.block'
+  )
+
+```
+### Census
+
+To understand the demographics of different areas, we pull in a variety of census data. 
+
+``` {r data_census, results='asis'}
+
+og_vars = c("B01003_001", "B19013_001", 
+                        "B02001_002", "B08013_001",
+                        "B08012_001", "B08301_001", 
+                        "B08301_010", "B01002_001"
+                        )
+
+added_vars = c("B25026_001E","B02001_002E","B15001_050E",
+              "B15001_009E","B19013_001E","B25058_001E",
+              "B06012_002E", "B08301_003E", "B08301_010E", 
+              "B08301_016E", "B08301_018E", "B08301_021E", 
+              "B08007_001E", "B11016_001E", "B25044_003E", 
+              "B15003_022E", "B01003_001E", "B08301_019E", 
+              "B08301_017E", "B08301_020E", "B08301_004E", 
+              "B08135_001E", "B08303_001E", "B08303_002E", 
+              "B08303_003E", "B08303_004E", "B08303_005E", 
+              "B08303_006E", "B08303_007E", "B08303_008E", 
+              "B08303_009E", "B08303_010E", "B08303_011E", 
+              "B08303_012E", "B08303_013E", "B08301_018E", 
+              "B15003_022E")
+# 
+# SF.census =
+#   get_acs(
+#     geography = "tract",
+#     variables = unique(c(og_vars,added_vars)),
+#     year = 2019,
+#     state = "CA",
+#     geometry = TRUE,
+#     county=c("San Francisco"),
+#     output = "wide"
+#           ) %>%
+#   rename(
+#     Total_Pop =  B01003_001E,
+#     Med_Inc = B19013_001E,
+#     Med_Age = B01002_001E,
+#     White_Pop = B02001_002E,
+#     Travel_Time = B08013_001E,
+#     Num_Commuters = B08012_001E,
+#     Means_of_Transport = B08301_001E,
+#     Total_Public_Trans = B08301_010E,
+#     workforce_16 = B08007_001E,
+#     Num_Vehicles = B06012_002E,
+# 
+#     drove_to_work = B08301_003E,
+#     House_holds_no_vehicles = B25044_003E,
+#     total_households = B11016_001E
+#     ) %>%
+#   mutate(
+#     workers_commute_30_90min = B08303_008E + B08303_009E + B08303_010E + B08303_011E + B08303_012E + B08303_013E,
+#     commute_30_90min_pct = (workers_commute_30_90min/workforce_16),
+#     households_car_pct = (Num_Vehicles/total_households),
+#     households_NOcar_pct = (House_holds_no_vehicles/total_households),
+#     Drive_Work_pct = (drove_to_work/workforce_16),
+#     PublicTransport_work_pct = (Total_Public_Trans/workforce_16)
+#          ) %>%
+#   dplyr::select(Total_Pop, Med_Inc, White_Pop, Travel_Time,
+#          Means_of_Transport, Total_Public_Trans, Med_Age,
+#          workforce_16, Num_Vehicles, households_NOcar_pct, households_car_pct,
+#          commute_30_90min_pct, Drive_Work_pct, PublicTransport_work_pct,
+#          GEOID, geometry) %>%
+#   mutate(Percent_White = White_Pop / Total_Pop,
+#          Mean_Commute_Time = Travel_Time / Total_Public_Trans,
+#          Percent_Taking_Public_Trans = Total_Public_Trans / Means_of_Transport)
+
+# web_srid = 'EPSG:3857'
+# path = 'C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/sf_2019census.geojson'
+# st_write(st_transform(SF.census, web_srid), path, delete_dsn=T)
+
+path = 'C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/sf_2019census.geojson'
+SF.census = st_read(path) %>%
+  st_transform(., sf_crs)
+
+SF.tracts = 
+  SF.census %>%
+  as.data.frame() %>%
+  distinct(GEOID, .keep_all = TRUE) %>%
+  dplyr::select(GEOID, geometry) %>% 
+  st_sf
+
+park.census = 
+  st_join(
+    park.blocks %>%
+      dplyr::select(id.block,geometry),
+    SF.tracts %>%
+      st_transform(crs=sf_crs),
+    join=st_intersects,
+    left = TRUE) %>% 
+  st_drop_geometry() %>%
+  filter(id.block %in% park.import$id.block) %>%
+  left_join(
+    .,
+    SF.census %>%
+      st_drop_geometry(),
+    on='GEOID'
+    ) %>%
+  dplyr::select(-GEOID) %>%
+  left_join(
+    park.import %>%
+      dplyr::select(id.bdb, id.block, t.pct.occ),
+    .,
+    on='id.block'
+  )
+
+rm(SF.tracts)
+rm(SF.census)
+
+correlation_table(
+    data=park.census %>%
+      dplyr::select(-id.bdb,-id.block) %>%
+      na.omit(.), 
+    target="t.pct.occ"
+  ) %>%
+  arrange(Variable) %>%
+  filter(Variable!='t.pct.occ') %>%
+  rename(
+    Correlation = t.pct.occ
+  ) %>%
+  kable() %>%
+  kable_styling()
+
+park.census = 
+  park.census %>%
+  dplyr::select(
+    id.block,
+    households_car_pct,
+    Med_Inc,
+    Percent_White
+  ) %>% 
+  distinct() %>%
+    arrange(id.block) %>%
+    data.table(., key='id.block')
+
+
+
 ```
 
-## Meter Filters
+Looking at this correlation plot to the Meter's Occupation Rate, a majority of the census demographics have little linear connection with the rate. The strongest variables (that we will actually use) are (1) % that Drive to Work, Median Income, & % of the population that's White.
 
-occupied rate = 80%
+The stronger variables could form a similar 'gentrification' narrative similar to a previous San Francisco Bay study. Many of the high density, high demand neighborhoods are being primarily the home of new market-rate, car-less housing for predominantly white, higher-income residents. Although this narrative is outside the scope of the project and app, the neighborhoods that have higher demand for street parking align with those new developments.
 
-find threshold:
- - appropriate usage Rate by hour
+### Weather Info
 
-Time Limit = 240 min (9am to 10pm)
+Another external predictor is the temperature, wind, and precipitation by hour or day. The hope was that these predictors could help describe some parking patterns.
 
-``` {r data}
+```{r import_weather, message = FALSE, warning = FALSE, cache = TRUE, results='asis'}
+
+
+# for some reason the SFO weather station isn't working
+
+path = 'C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/sf_weather_2019.parquet'
+
+# library(riem)
+# oak.weather =
+#   riem_measures(station = "OAK", date_start = "2019-01-02", date_end = "2020-01-01")
+# write_arrow(oak.weather, path)
+
+oak.weather = 
+  read_arrow(path) %>%
+    dplyr::select(valid, tmpf, p01i, sknt) %>%
+    replace(is.na(.), 0) %>%
+    mutate(interval60 = ymd_h(substr(valid,1,13))) %>%
+    dplyr::group_by(interval60) %>%
+    dplyr::summarize(
+      Temperature = max(tmpf),
+      Wind_Speed = max(sknt)
+      ) %>%
+  filter(interval60 %in% park.import$datetime) %>%
+  mutate(Temperature = ifelse(Temperature == 0, 42, Temperature)) 
+
+oak.rain = 
+  read_arrow(path) %>%
+    dplyr::select(valid, tmpf, p01i, sknt) %>%
+    replace(is.na(.), 0) %>%
+    mutate(interval60 = ymd_h(substr(valid,1,13))) %>%
+    mutate(date = date(interval60)) %>%
+    dplyr::group_by(date) %>%
+    dplyr::summarize(Precipitation = sum(p01i)) %>%
+  filter(date %in% park.import$date)
+
+
+
+park.weather =
+  park.import %>% 
+  dplyr::select(
+    id.bdb, id.block, 
+    datetime, date,
+    t.pct.occ) %>%
+  left_join(
+    .,
+    oak.weather %>%
+      rename(datetime = interval60),
+    on='datetime'
+  ) %>%
+  left_join(
+    .,
+    oak.rain,
+    on='date'
+  )
+
+rm(oak.rain)
+rm(oak.weather)
+
+
+correlation_table(
+    data=park.weather %>%
+      dplyr::select(t.pct.occ, Temperature, Wind_Speed, Precipitation) %>%
+      na.omit(.), 
+    target="t.pct.occ"
+  ) %>%
+  arrange(Variable) %>%
+  filter(Variable!='t.pct.occ') %>%
+  rename(
+    Correlation = t.pct.occ
+  ) %>%
+  kable() %>%
+  kable_styling()
+
+rm(park.weather)
+```
+As seen in the correlation chart (and weather plot below), the weather variables are very insignificant to the meter's occupation rate. As a result, they won't be used.
+
+## Engineer Data
+
+The primary predictors to be engineered are ones that describe the meter's place in space and time. 
+
+### Average Times
+
+To start, the meter's occupancy rate is going to be averaged by different time periods (e.g. hours, day, week, month) and geographic locations (e.g. block, district, city quadrant). 
+``` {r data_park, results='asis'}
+
+# one line group_by, summarize, ungroup
+mutate_by = function(.data, group, ...) {
+  group_by_at(
+    .data, 
+    dplyr::vars( !! rlang::enquo(group) )) %>%
+    mutate(...) %>%
+    ungroup()
+  }
+
+park.avg =
+  park.import %>%
+  # BY BLOCK ID
+  ## DAY
+  mutate_by(
+    group=c('id.block', 'day'),
+    avg.blk.day = mean(t.pct.occ)
+  ) %>%
+  ## DAY OF WEEK
+  mutate_by(
+    group=c('id.block', 'day.week'),
+    avg.blk.weekday = mean(t.pct.occ)
+  ) %>%
+  mutate_by(
+    group=c('id.block', 'month'),
+    avg.blk.month = mean(t.pct.occ)
+  ) %>%
+  
+  # BY TIME BIN
+  ## DAY
+  mutate_by(
+    group=c('bin', 'day'),
+    avg.bin.day = mean(t.pct.occ)
+  ) %>%
+  ## DAY OF WEEK
+  mutate_by(
+    group=c('bin', 'day.week'),
+    avg.bin.weekday = mean(t.pct.occ)
+  ) %>%
+  mutate_by(
+    group=c('bin', 'month'),
+    avg.bin.month = mean(t.pct.occ)
+  ) %>%
+  
+  # BY BLOCK & BIN 
+  ## DAY OF WEEK
+  mutate_by(
+    group=c('id.block', 'bin', 'day.week'),
+    avg.blkbin.weekday = mean(t.pct.occ)
+  ) %>%
+  mutate_by(
+    group=c('id.block', 'bin', 'month'),
+    avg.blkbin.month = mean(t.pct.occ)
+  ) %>%
+  
+  # BY District
+  ## 
+  mutate_by(
+    group=c('id.dist', 'bin', 'day'),
+    avg.distbin.day = mean(t.pct.occ)
+  ) %>%
+  
+  ## DAY OF WEEK
+  mutate_by(
+    group=c('id.dist', 'bin', 'day.week'),
+    avg.distbin.weekday = mean(t.pct.occ)
+  ) %>%
+  mutate_by(
+    group=c('id.block', 'bin', 'month'),
+    avg.distbin.month = mean(t.pct.occ)
+  ) %>%
+  dplyr::select(c(starts_with("avg."), "t.pct.occ", "id.bdb"))
+
+```
+
+The variables initially are a range of combinations of time periods and geographies. The initial correlation table below suggests that most of the variables have a high correlation.
+
+
+``` {r EDA_corr_avg, results='asis'}
+
+park.avg.cor =
+  correlation_table(
+    data=park.avg %>%
+      dplyr::select(c(starts_with("avg."), "t.pct.occ")), 
+    target="t.pct.occ") %>%
+  arrange(Variable) %>%
+  filter(Variable!='t.pct.occ')
+
+park.avg.cor.col = 
+  str_split_fixed(park.avg.cor$Variable, "[.]", 3) %>%
+  as.tibble() %>%
+  dplyr::select(2,3)
+colnames(park.avg.cor.col) = c("By", "Time Period")
+
+cbind(
+  park.avg.cor.col, 
+  park.avg.cor %>%
+    dplyr::select(-Variable)
+) %>%
+  kable() %>%
+  kable_styling()
+
+park.avg = 
+  park.avg %>%
+  dplyr::select(
+    -avg.bin.day, -avg.bin.month, -avg.bin.weekday,
+    )
+
+rm(park.avg.cor)
+rm(park.avg.cor.col)
+
+```
+Because of their potency, the predictors will be selected after determining their multicollinearity at the end of the EDA section.
+
+### Lagged Time
+
+The averages simply look at different scales of time and space. Lagged time aims to look at periods before the current period.  
+
+``` {r data_time_lag}
+
+park.bdb.occ = park.import %>%
+  dplyr::select(id.bdb, t.pct.occ) %>%
+  arrange(id.bdb)
+
+lag_lead = function(data_col, last_col, first_col, n=1){
+  c(ifelse(
+    last_col==TRUE,
+    dplyr::lag(data_col, n=n)[1],
+    NA
+  ),
+  ifelse(
+    first_col==TRUE,
+    dplyr::lead(data_col, n=n)[1],
+    NA
+  )) %>% paste(.,collapse=" ")
+}
+
+park.lag = 
+  park.import %>% 
+    arrange(id.block, datetime) %>% 
+    mutate(
+      lag.blkbin.1bin = ifelse(
+        first.bin==T,NA,
+        dplyr::lag(t.pct.occ,1)
+      ),
+      # lead.bin.1 = ifelse(
+      #   last.bin==T,NA,
+      #   dplyr::lead(t.pct.occ,1)
+      # ),
+      lag.blkbin.1day = ifelse(
+        lag(bin,3)!=bin,
+        NA,
+        dplyr::lag(t.pct.occ,3)
+      ),
+      # lead.bin.3 = ifelse(
+      #   lead(bin,3)!=bin,NA,
+      #   dplyr::lead(t.pct.occ,3)
+      # ),
+      lag.blkid.week = ifelse((yday(date)-8)>0,
+        paste(
+          id.block,
+          str_pad(yday(date)-8, 3, pad = "0"),
+          bin, sep='_'),
+        NA
+      )
+      # lead.date.7 = ifelse((yday(date)+8)<366,
+      #   paste(
+      #     id.block,
+      #     str_pad(yday(date)+8, 3, pad = "0"),
+      #     bin, sep='_'),
+      #   NA
+      # )
+      )
+  # left_join(
+  #   .,
+  #   park.blk.occ %>% 
+  #     rename(lead.occ.7 = t.pct.occ, lead.date.7=id.bdb),
+  #   on='lead.date.7', 
+  #   na_matches = "never"
+  # ) %>%
+
+park.lag = 
+  left_join(
+    park.lag,
+    park.bdb.occ %>% 
+      rename(
+        lag.blkbin.week = t.pct.occ, 
+        lag.blkid.week=id.bdb),
+    on='lag.blkid.week',
+    na_matches = "never"
+  ) %>%
+  dplyr::select(-lag.blkid.week)  %>%
+  dplyr::select(c(starts_with("lag."), "t.pct.occ", "id.bdb"))
+
+rm(park.bdb.occ)
+
+```
+The lag time has to work around the meter blocks which are grouped by time period bins of a few hours. The lags then look at three periods (1) 1 bin beforehand, 1 day beforehand *(same time bin)*, and 1 week beforehand. 
+
+So if our current time bin is Tuesday December 17th, 2019 between 12pm to 3pm, we will look at the same meter's bin (1) that day from 9am to 12pm, (2) one day beforehand on Mon Dec 16th from 12-3, then (3) one week beforehand on Tue Dec 10th at 12-3. 
+
+``` {r eda_lag, results='asis'}
+
+correlation_table(
+  data=park.lag %>%
+    dplyr::select(c(starts_with("lag."), "t.pct.occ")), 
+  target="t.pct.occ") %>%
+  arrange(Variable) %>%
+  filter(Variable!='t.pct.occ') %>%
+  mutate(
+    `Lag Period` = c('1 Bin', '1 Day', '1 Week'),
+    Correlation = t.pct.occ
+  ) %>% 
+  dplyr::select(-Variable,-t.pct.occ) %>%
+  kable() %>%
+  kable_styling()
+
+```
+
+*As a side note:* When aggregating, I lean towards performing the mean of all the groouped occupancy rates -- rather than median or recalculating the rate & mean by summing the group's occupied time & possible time. 
+
+### Join All
+
+Now we simply join the previous variables into one dataset. 
+
+``` {r data_weather_join}
+
+
+park.import = 
+  park.import %>%
+    dplyr::select(
+      -first.bin, -last.bin, -first.date, -last.date
+      #-week, -month, -day
+    ) %>% 
+    arrange(id.block) %>%
+    data.table(.)
+
+park.import = 
+  park.import %>%
+  left_join(
+    .,
+    park.census %>%
+      distinct(),
+    by = 'id.block'
+  )
+rm(park.census)
+
+park.import = 
+  merge(
+    park.import %>%
+      data.table(., key='id.bdb'), #, key='id.block'),
+    park.avg %>%
+      dplyr::select(-t.pct.occ) %>%
+      data.table(., key='id.bdb'),
+    on='id.bdb'
+  ) %>%
+  merge(
+    .,
+    park.lag %>%
+      dplyr::select(-t.pct.occ) %>%
+      data.table(., key='id.bdb'),
+    on='id.bdb'
+    )
+rm(park.avg)
+rm(park.lag)
+
+
+```
+
+# EDA
+
+The varying time and locations in this large dataset provide an amazing opportunity to understand parking dynamics in the relative vacuum of San Francisco. With the features mostly imported and engineered, we will perform **Exploratory Data Analysis (EDA)** to evaluate the variables themselves as well as their relationship to each other. The section is split between analysis of the dependent variable and then analysis of the predictor variables. 
+
+## Meter Occupancy Rate
+
+To clarify, the dependent variable is whether or not a Block's Meters in a time period have an Occupancy Rate above 50%. So a 'TRUE'/1 suggests that at least half of the the block is filled up in a time period. 
+
+For example, lets say the 1000 Valencia Block has 3 meters active between the time period of 9am to noon. With each meter having the ability to be operational for 3 hour, the block has an aggregate of 9 possible parking hours that people can park infront of this [Ritual Coffee](https://goo.gl/maps/noU6JTwxtpkfK6Qy6). If each meter is occupied for 2 hours during that period, then the block aggregates 6 occupied hours in total. Leading to that block and time period having a parking occupation rate of 66.6% (6hrs / 9hrs). So there will likely be an open parking spot that I have to awkwardly stand in because the line is too long to my favorite coffee shop. 
+
+Even though the statistic doesn't describe how long at least one single parking meter is unoccupied, the rate still suggests how frequently used the parking is. This will still be helpful for drivers who want to find a parking meter close to a bougie, $6-a-cup coffee shop. 
+
+### Table
+
+The first table highlights the distribution of the Occupation rate across the day. With the highest rate of parking being ain the middle of the day. This largely could be the result of both work-related and recreational trips being active at the same time. With the city being a regional and tourist destination, many out-of-town travelers heavily lean on parking. 
+
+``` {r EDA_table_b, results='asis'}
+
+
+park.import$occ50 = FALSE
+park.import[park.import$t.pct.occ >= .5, 'occ50'] = TRUE
+
+
+
+
+tab = 
+  describeBy(
+    park.import  %>% 
+      dplyr::select(t.pct.occ, bin),
+    group='bin', mat = TRUE,
+    na.rm = TRUE
+  ) %>%
+  as.data.frame() %>%
+  #filter(item>3) %>%
+  arrange(desc(item)) %>%
+  dplyr::select(-item, -vars, -n) %>%
+  tail(., -3) %>%
+  arrange(fct_relevel(group1, c('9a to 12p','12p to 3p','3p to 6p')))
+
+rownames(tab) = NULL
+
+tab %>%
+  transmute(
+    `Time Period` = group1,
+    Mean = mean %>% percent_formatter(., n=1),
+    Median = median  %>% percent_formatter(., n=1),
+    SD = sd %>% percent_formatter(.),
+    Min = min %>% percent_formatter(.),
+    Max = max %>% percent_formatter(.)
+  ) %>% 
+  kable(title = 'Parking Meter Occupation Rate') %>%
+  kable_styling() %>%
+  add_header_above(c(" " = 1, "Parking Occupation Rate" = 5))
+
+
+```
+
+The following table highlights the proportion of the blocks that are above 50% parking occupation. It is odd that a majority of blocks are only half full of parking. This is an uneasy trend as personal experience and SFMTA's report suggest that blocks are typicaly more than half full. 
+
+``` {r EDA_table, results='asis'}
+
+
+
+park.len = nrow(park.import)
+
+park.import %>%
+  mutate(`Parking\nAbove 50%\nOccupied` = occ50 %>% as.character()) %>%
+  group_by(`Parking\nAbove 50%\nOccupied`) %>% 
+  dplyr::summarize(
+    `Percent\nof Total` = (n()/park.len) %>% percent_formatter(.),
+    Count = n() %>% format(big.mark = ',')
+      ) %>%
+  kable() %>%
+  kable_styling()
+
 ```
 
 
-# 2. Exploratory Data Analysis
-*Describe your exploratory analysis using maps and plots.*
+### Histogram
 
-``` {r EDA}
+The histogram better describes the occupation rate distribution. The blocks provide a bell curve around the mean of 41% occupied. The bin at 0% could be naturally empty blocks, or that there are blocks and bins that aren't allowed to have parking. 
+
+``` {r EDA_hist}
+
+title = "Parking Occupation Rate Histogram"
+subtitle = 'San Francisco, 2019'
+
+ggplot(park.import, aes(x = t.pct.occ)) + 
+  geom_histogram(aes(y = ..density..),
+                 colour = 1, fill = "grey70", 
+                 position="identity", closed = "left",
+                 binwidth = .05, boundary = 0
+                 ) +
+  geom_density(aes(y=..density..), lwd = 1.2,
+               linetype = 2,
+               colour = 2) +
+  scale_x_continuous(
+    labels = function(num) num %>% percent_formatter(),
+    name="Meter Occupation Rate") +
+  labs(
+    title=title,
+    subtitle=subtitle) +
+  theme_minimal()
+
 ```
 
-# 3. Model
+### Time Series
+
+This time series chart provides the occupancy rates over the course of the year. Each chart averages the blocks by the day, week, and month. The top charts highlight that the average occupancy rate doesn't vary much throughout the year -- aside from a small 1% dip in summer and winter. The bottom date chart highlights the weekend peaks of parking. As indicated earlier, these peaks could be the result of recreational travel. 
+
+```{r EDA_timeseries, cache = TRUE}
+
+ybreaks = c(.4,.45,.5)
+ysmolbreaks = c(.425,.475)
+
+map_park = function(
+  time='date', color='black', 
+  size=1, ylab='')
+ ggplot(
+  park.import %>%
+    group_by(.data[[time]]) %>%
+    dplyr::summarize(
+      t.pct.occ =
+        sum(t.hrs.occ)/sum(t.hrs.tot)))+
+  geom_line(
+    aes(
+      x = .data[[time]], 
+      y = t.pct.occ), 
+    color=color, size=size)+
+  labs(
+    title=glue("by {toupper(time)}"),
+    x="Date",
+    y=ylab) +
+    xlim(
+      min(park.import[[time]]),
+      max(park.import[[time]])) +
+    scale_y_continuous(
+      breaks = ybreaks,
+      minor_breaks = ysmolbreaks,
+      labels = percent_formatter,
+      limits = c(.4,.5)
+      ) +
+  plotTheme()
+
+date = map_park('date', 'darkgreen', size=.5)
+week = map_park('week', 'green', size=1,
+                ylab = "Occupied / Operational Hours")
+month = map_park('month', 'lightgreen', size=1.5)
+
+remove_x = theme(
+  axis.text.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.x = element_blank()
+)
+
+p <- list(
+  month + remove_x,
+  week + remove_x,
+  date
+)
+title = "Average Occupation Rate of Parking Meters"
+subtitle = 'San Francisco, 2019'
+wrap_plots(p, nrow = 3) + 
+  plot_layout(guides = "collect") + 
+  plot_annotation(
+    title = title,
+    subtitle = subtitle) + plotTheme()
+
+```
+
+### Weekday Time Series
+
+This table builds off the previously discussed weekday trend. Saturdays as a whole have a higher occupation rate than other days. The 12-3 time period still remains very high on weekdays.
+
+``` {r EDA_table_weekday, results='asis'}
+
+title = "Average Percent of Time Meter is Occupied"
+
+park.import$bin = factor(park.import$bin, levels = c("9a to 12p", "12p to 3p", "3p to 6p"))
+park.import$day.week = factor(
+  park.import$day.week,
+  levels = 
+    c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+park.weekday = 
+  park.import %>%
+    group_by(day.week,bin) %>%
+    summarise(
+      Count = sum(meters.count),
+      Mean = mean(t.pct.occ,rm.na=T) #,
+      #Median = mean(t.pct.occ,rm.na=T)
+      )
+rownames(park.weekday) = NULL
+
+park.weekday %>%
+  ungroup() %>%
+  transmute(
+    `Week Day` = day.week %>% as.character(),
+    `Time Period` = bin %>% as.character(),
+    Count = Count %>% format(big.mark=','),
+    Mean = Mean %>% percent_formatter(., n=1) #,
+    #Median = Median %>% percent_formatter(., n=1)
+      ) %>%
+  kable(title=title) %>%
+  kable_styling() %>%
+  collapse_rows(., columns = 1:2)
+
+# cbind(
+#   park.import %>%
+#     group_by(day.week) %>%
+#     dplyr::summarize(
+#       `Occupation Rate` = mean(t.pct.occ, na.rm = T) %>% percent_formatter(n=1),
+#       `Occupied Hours` = sum(t.hrs.occ) %>% round(0) %>% format(big.mark=','),
+#       Count = n()
+#     ),
+#   park.import %>%
+#     filter(occ50==TRUE) %>%
+#     group_by(day.week) %>%
+#     dplyr::summarize(
+#       `Above 50% Occupied` = n()
+#     ) %>%
+#     ungroup() %>%
+#     dplyr::select(-day.week)
+#   ) %>%
+#   rename(`Week Day` = day.week) %>%
+#   mutate(`Above 50% Occupied` = (`Above 50% Occupied`/Count) %>% percent_formatter()) %>%
+#   dplyr::select(-Count) %>%
+#   kable() %>%
+#   kable_styling()
+
+```
+This time series plot helps visualize the weekend trends while splitting by the cities quadrants. The NE-quadrant is San Francisco's higher density recreation & employment area -- including the Downtown Business District, the touristy Fisherman's Wharf, and the high traffic Civic Center/Tenderloin. The SE-quadrant also is a higher-traffic area -- which includes the Mission neighborhood and the sports stadiums. The SW & NW quadrants are largely residential.
+
+The plot slightly complicates this narrative as the NW-quadrant has the consistently highest occupation rate of +40%. This is likely due to the parking meters (29% of total) being located on the busy driving corridors of Geary boulevard, the Marina, and Hayes Valley. The NE- & SE-quadrants of Downtown & the Mission have high peaks but drop off at night -- due to the day-driven employment centers. The SW-quadrant has few meters (16%) spread across the largest, low-density area with abundant free on-street parking. 
+
+``` {r plot_time_weekday}
+
+library(forcats)
+
+park.weekday = 
+  park.import %>%
+    group_by(day.week,bin,quad) %>%
+    summarise(
+      Count = sum(meters.count),
+      Mean = mean(t.pct.occ,rm.na=T) #,
+      #Median = mean(t.pct.occ,rm.na=T)
+      ) %>%
+  mutate(
+    id = row_number(),
+    Quadrant = quad
+    
+    )
+
+park.weekday$week_bin = fct_cross(park.weekday$bin, park.weekday$day.week, sep = ' - ')
+
+title = "Average Occupation Rate of Parking Meters"
+subtitle = 'by Weekday, Time Period, & Quadrant of San Francisco'
+
+
+ybreaks = c(.275,.30,.325,.35,.375,.4,.425,.45,.475,.5)
+
+
+period_formatter = function(brk){
+  bstr = brk %>% as.character() %>%
+    str_replace(., 'a ', ' ') %>% str_replace(., 'p', '') %>% 
+    str_replace(., '3p', '3') %>% str_replace(., '6p', '6') %>%
+    str_replace(., ' - ', ' — ') %>% str_replace(., ' to ', '-') 
+  splt = c(strsplit(bstr, '—', fixed=T))%>% unlist()
+  fst = splt[[1]]
+  sec = ifelse(fst=='9-12 ', splt[[2]], '')
+  fin = paste(sec,fst, collapse = "   ") %>% str_trim()
+  return(fin)
+}
+
+
+brks = unique(park.weekday$week_bin) %>% as.character() %>% 
+  lapply(., function(wk) period_formatter(wk))
+
+
+ggplot(
+  park.weekday %>% ungroup()) + 
+    annotate("rect", 
+             xmin=1-.5, xmax=4-.5, ymin=-Inf, ymax=Inf, 
+             alpha=0.2, fill="grey40") +
+    annotate("rect", 
+             xmin=1+6-.5, xmax=4+6-.5, ymin=-Inf, ymax=Inf, 
+             alpha=0.2, fill="grey40") +
+    annotate("rect", 
+             xmin=1+6*2-.5, xmax=4+6*2-.5, ymin=-Inf, ymax=Inf, 
+             alpha=0.2, fill="grey40") +
+  geom_line(
+    aes(
+      x = week_bin, 
+      y = Mean, 
+      group = id,
+      color=Quadrant
+      ),
+    alpha=0.90,
+    size=1.5
+    ) + 
+  labs(
+    title=title,
+    subtitle=subtitle,
+    x="Time Period",
+    y= "Occupied Meter Rate") +
+    # xlim(
+    #   min(park.import[[time]]),
+    #   max(park.import[[time]])) +
+    scale_y_continuous(
+      breaks = ybreaks,
+      labels = percent_formatter,
+      #limits = c(.4,.5)
+      ) +
+    # scale_x_continuous(
+    #   ,
+    #   labels = period_formatter
+    #   )
+    scale_x_discrete(labels= brks) + 
+  theme(axis.text.x = element_text(
+    angle = 45, vjust = 1, hjust=1)) + 
+  plotTheme()
+
+
+```
+### Time Period Map
+
+The Time Period Map by Quadrant highlights the trends previously discussed. Starting with the Downtown NE-quadrant, there is a heavy variation in time and location. The north coast is largely the touristy Fisherman's Wharf while the core has more business activity. This will be discussed in more length in the next map.
+
+The SE-quadrant has a heavy variation in the far north-eastern cornea, in the SOMA *('South of Market')* & Mission Bay area, where there is a heavy concentration of tech companies (i.e. Twitter, Salesforce) and a regional rail station. As a result, the morning has a heavy amount of parking occupancy but dramatically drops in the evening. The area is newly developed and has room to fleshed out its recreational activities past the Giants and Warriors stadiums. Combined with more off-street garages, there is less parking demand.
+
+As mentioned, the NW-quadrant has pockets of consistently occupied corridors. The SE-quadrant is very large with few commercial centers to attract more paid parking. 
+
+``` {r EDA_map}
+
+SF.quad.labels = sf_to_labels(SF.quad, 'quad')
+
+park.map = 
+  #rbind(
+    park.import %>%
+      dplyr::group_by(id.block, bin) %>%
+      dplyr::summarize(
+        t.pct.occ = mean(t.pct.occ, rm.na=T),
+        meters.count = sum(meters.count)
+      ) %>% #,
+    # park.import %>%
+    #   dplyr::group_by(id.block) %>%
+    #   dplyr::summarize(
+    #     t.pct.occ = mean(t.pct.occ, rm.na=T),
+    #     meters.count = sum(meters.count)
+    #   ) %>%
+    #   mutate(bin = 'All')
+    #)%>%
+  merge(
+    .,
+    park.blocks,
+    on='id.block'
+  ) %>%
+  st_sf() %>%
+  st_buffer(250)
+  
+park.map$bin = factor(park.map$bin, levels = c(
+  #"All",
+  "9a to 12p", "12p to 3p", "3p to 6p"))
+# park.map$day.week = factor(
+#   park.map$day.week,
+#   levels = 
+#     c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+ggplot()+
+  geom_sf(
+    data = SF.quad, fill='grey90'
+  ) +
+  geom_sf(data = park.map,
+          aes(fill = t.pct.occ), #, size=meters.count), 
+          color = "transparent", alpha = 0.8
+          ) +
+  geom_text_sf(
+    SF.quad.labels, label.size = .5,
+    vjust = 'bottom'
+    ) + 
+  scale_fill_gradientn(
+    colors = rev(RColorBrewer::brewer.pal(5, "RdYlGn")),
+    values = c(0,.25,.55,.75,1),
+    labels = function(tstr) percent_formatter(tstr),
+    name='% of Time\nMeter is\nOccupied',
+    guide = "colorbar"
+    #direction = -1, discrete = FALSE, option = "D"
+    ) +
+  geom_sf(data = SF.quad, color='black',
+          fill = "transparent", #alpha = 0.8,
+          size=.01
+          #linetype = 'dashed'
+          ) +
+  facet_wrap(~bin, ncol = 3)+
+  labs(
+    title='Parking Meter Occupation Rate - by Time Period',
+    subtitle = 'San Francisco, 2019'
+    ) + 
+  mapTheme+
+  guides(
+    fill = guide_colourbar(
+      barwidth = 16,
+      barheight = 1,
+      direction="horizontal",
+      #label.position = "bottom"
+      )
+    ) + 
+  theme(legend.position="bottom")
+
+```
+
+
+### Downtown Map
+
+With Downtown NE-quadrant having a larger share of meters (30.5%) and an interesting level of variety of uses, our team will focus one of our models just on the area. The map highlights the previously discussed trends of the touristy coast of Fisherman's Wharf. The Civic Center area's large amount of government, theater, and business buildings makes it a hot spot for parking. The Tenderloin and Chinatown have lower occupation rates as they don't have as many specific destinations or car-owners. 
+
+``` {r EDA_map_dwtn_1, fig.width=8}
+
+path = "C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/Parking_Management_Districts.csv"
+SF.dist = read.csv(path)
+
+SF.dist$geometry = st_as_sfc(SF.dist$shape, crs = 4326)
+
+SF.dist = SF.dist %>% 
+  st_sf() %>% st_transform(sf_crs) %>%
+  dplyr::select(PM_DISTRICT_ID, PM_DISTRICT_NAME, geometry) %>%
+  st_join(., SF.quad, largest=TRUE)
+
+#SF.quad.labels = sf_to_labels(SF.quad, 'quad') %>% dplyr::filter(label=='NE')
+SF.dist.labels = sf_to_labels(
+  SF.dist %>% arrange(quad) %>% 
+    dplyr::filter(quad=='NE') %>%
+    dplyr::filter(!PM_DISTRICT_NAME  %in% c(
+      'Polk', 'Telegraph Hill'
+    )), 'PM_DISTRICT_NAME') %>%
+  mutate(label = 
+    ifelse(
+      label == 'N.Beach-Chinatown',
+      'N.Beach\n\nChinatown',
+    ifelse(
+      label == "Fisherman's Wharf",
+      "\nFisherman's Wharf",
+           label)
+      ) #%>% gsub(' ','\n', ., fixed = TRUE)
+    )
+
+park.map = 
+  park.import %>% 
+    dplyr::filter(quad=='NE') %>%
+    dplyr::group_by(id.block, bin) %>%
+    dplyr::summarize(
+      t.pct.occ = mean(t.pct.occ, rm.na=T)
+    ) %>%
+  merge(
+    .,
+    park.blocks,
+    on='id.block'
+  ) %>%
+  st_sf() %>%
+  st_buffer(50)
+
+#park.map$bin = factor(park.map$bin, levels = c("All","9a to 12p", "12p to 3p", "3p to 6p"))
+# park.map$day.week = factor(
+#   park.map$day.week,
+#   levels = 
+#     c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+sep = 10000
+ggplot()+
+  geom_sf(
+    data = SF.quad %>% 
+      dplyr::filter(quad=='NE'), color = 'transparent', fill='grey90'
+  ) +
+  geom_sf(data = park.map,
+          aes(fill = t.pct.occ), #, size=meters.count), 
+          color = "transparent", #alpha = 0.95
+          ) +
+  geom_text(
+        data=SF.dist.labels, check_overlap=TRUE,
+        fontface='bold', color='black',
+        size=3,
+        aes(x=lon,y=lat, label=label)) + 
+  # geom_text_sf(
+  #   SF.dist.labels, check_overlap = TRUE,
+  #   size=1
+  #   #hjust = "top"#, vjust = "outward"
+  #   ) + 
+  #xlim(min(SF.dist.labels$lon)-sep, max(SF.dist.labels$lon)+sep) + 
+  scale_fill_gradientn(
+    colors = rev(RColorBrewer::brewer.pal(5, "RdYlGn")),
+    values = c(0,.25,.60,.80,1),
+    labels = function(tstr) percent_formatter(tstr)
+    #direction = -1, discrete = FALSE, option = "D"
+    )+
+  guides(fill = guide_colourbar(barwidth = 2)) + 
+  facet_wrap(~bin, ncol = 3)+
+  labs(
+    title='Parking Meter Occupation Rate - Downtown Area',
+    subtitle = 'San Francisco, 2019'
+    )+
+  mapTheme+
+  guides(
+    fill = guide_colourbar(
+      barwidth = 16,
+      barheight = 1,
+      direction="horizontal",
+      #label.position = "bottom"
+      )
+    ) + 
+  theme(legend.position="bottom")
+
+```
+
+With this map, it will be important to incorporate predictor variables that highlight the neighorhood and parking district specific spatial and time patterns.
+
+## Predictor Variables
+
+
+``` {r EDA_avg_tabs, results='asis'}
+
+table_title = glue("Summary Statistics")
+
+vars = c(
+  "t.pct.occ",
+  "avg.blk.day", "avg.blk.weekday", "avg.blk.month", 
+  "avg.blkbin.weekday", "avg.blkbin.month", "avg.distbin.day",
+  "avg.distbin.weekday", "avg.distbin.month"
+  # "lag.blkbin.1bin", "lag.blkbin.1day","lag.blkbin.week"
+  )
+
+Category = c(
+  'Occupation\nRate',
+  'Average\nBlock','Average\nBlock','Average\nBlock',
+  'Average\nDistrict & Bin','Average\nDistrict & Bin',
+  'Average\nBlock & Bin',  'Average\nBlock & Bin',  'Average\nBlock & Bin'
+  # 'Time Lag','Time Lag','Time Lag'
+)
+park.tab =
+  psych::describe(
+    park.import %>% 
+      dplyr::select(vars),
+    na.rm = TRUE
+    ) %>% 
+    as.data.frame() %>%
+    transmute(
+      Mean = mean %>% percent_formatter(., n=2),
+      SD = sd %>% percent_formatter(.),
+      Min = min %>% percent_formatter(.),
+      Max = max %>% percent_formatter(.)
+    ) 
+indx = rownames(park.tab)
+rownames(park.tab) = NULL
+  cbind(
+    Category = Category,
+    Variables = indx,
+    park.tab
+  ) %>%
+  kable() %>%
+  kable_styling() %>%
+  collapse_rows(., columns = 1)
+
+```
+
+
+``` {r EDA_avg_lag, results='asis'}
+
+table_title = glue("Summary Statistics")
+
+vars = c(
+  "t.pct.occ",
+  # "avg.blk.day", "avg.blk.weekday", "avg.blk.month", 
+  # "avg.blkbin.weekday", "avg.blkbin.month", "avg.distbin.day",
+  # "avg.distbin.weekday", "avg.distbin.month", 
+  "lag.blkbin.1bin", "lag.blkbin.1day","lag.blkbin.week"
+  )
+
+Category = c(
+  'Occupation\nRate',
+  # 'Average\nBlock','Average\nBlock','Average\nBlock',
+  # 'Average\nDistrict & Bin','Average\nDistrict & Bin',
+  # 'Average\nBlock & Bin',  'Average\nBlock & Bin',  'Average\nBlock & Bin',
+  'Time Lag','Time Lag','Time Lag'
+)
+
+park.tab =
+  psych::describe(
+    park.import %>% 
+      dplyr::select(vars),
+    na.rm = TRUE
+    ) %>% 
+    as.data.frame() %>%
+    transmute(
+      Mean = mean %>% percent_formatter(., n=2),
+      SD = sd %>% percent_formatter(.),
+      Min = min %>% percent_formatter(.),
+      Max = max %>% percent_formatter(.)
+    ) 
+indx = rownames(park.tab)
+rownames(park.tab) = NULL
+  cbind(
+    Category = Category,
+    Variables = indx,
+    park.tab
+  ) %>%
+  kable() %>%
+  kable_styling() %>%
+  collapse_rows(., columns = 1)
+
+```
+
+
+### Weather Plot
+
+As the earlier correlation table showed, the weather patterns don't line up with any of the changes in parking occupation. As a result, the weather variables will be left out
+
+```{r plot_weather, catche = TRUE, warning=FALSE}
+remove_x = theme(
+  axis.text.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.x = element_blank()
+)
+
+path = 'C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/sf_weather_2019.parquet'
+
+oak.weather.daily = read_arrow(path) %>%
+  dplyr::select(valid, tmpf, p01i, sknt) %>%
+  replace(is.na(.), 0) %>%
+    mutate(interval60 = ymd_h(substr(valid,1,13))) %>%
+    mutate(week = week(interval60),
+           #dotw = wday(interval60, label=TRUE),
+           date = date(interval60)) %>%
+    group_by(date) %>%
+    dplyr::summarize(Temperature = max(tmpf),
+              Precipitation = sum(p01i),
+              Wind_Speed = max(sknt)) %>%
+    mutate(Temperature = ifelse(Temperature == 0, 42, Temperature))
+
+rain = ggplot(oak.weather.daily, aes(date,Precipitation)) + 
+  geom_line(colour = "blue") + 
+  labs(title="Percipitation", x="Day", y="Perecipitation") + plotTheme()
+
+wind = ggplot(oak.weather.daily, aes(date,Wind_Speed)) + 
+  geom_line(colour = "gold") + 
+    labs(title="Wind Speed", x="Day", y="Wind Speed") + plotTheme()
+
+temp = ggplot(oak.weather.daily, aes(date,Temperature)) + 
+  geom_line(colour = "red") + 
+    labs(title="Temperature", x="Day", y="Temperature") + plotTheme()
+
+p = list(
+  week = map_park('week', 'green', size=1,
+                ylab = "Occupied %") + remove_x,
+  rain + remove_x,
+  wind + remove_x,
+  temp
+)
+wrap_plots(p, nrow = 4) + plot_layout(guides = "collect") + 
+  plot_annotation(title = "Weather Data - Oakland OAK - Daily 2019") + plotTheme()
+
+rm(oak.weather.daily)
+```
+
+### Correlation Plot
+
+The correlation plot highlights the variables that have a higher linear relationship to the dependent variable ('t.pct.occ' is just percent occupation) and each other.  
+
+``` {r corr_plot, fig.height=8}
+
+vars = c(  "t.pct.occ", 'avg.blk.day', 'avg.blk.weekday', 'avg.distbin.day', 'avg.distbin.weekday', 'avg.blkbin.weekday', 'households_car_pct', 'Med_Inc', 'Percent_White', 'lag.blkbin.1bin', 'lag.blkbin.1day', 'lag.blkbin.week')
+
+# c("t.pct.occ","avg.blk.day", "avg.blk.weekday", "avg.blk.month", 
+     #   "avg.blkbin.weekday", "avg.blkbin.month", "avg.distbin.day",
+     #   "avg.distbin.weekday", "avg.distbin.month", "lag.blkbin.1bin",
+     #   "lag.blkbin.1day","lag.blkbin.week", 'households_car_pct', 'Med_Inc', 'Percent_White')
+
+park.corr = 
+  park.import %>%
+  dplyr::select(vars) %>% 
+  na.omit(.)
+
+corrmethod = 'pearson'
+
+ggcorrplot::ggcorrplot(
+  cor(park.corr, method=corrmethod) %>%
+    round(., 2), # %>% sub("^0+", "", .),
+    colors = c("#6D9EC1", "white", "#E46726"), 
+    type="lower", ggtheme = plotTheme,lab_size=3.25,
+    lab=TRUE
+  ) +
+  labs(
+      title = "Pearson Correlation",
+      subtitle = "SF Park Variables"
+      )
+rm(park.corr)
+
+```
+The largest takeaways are that the averages by block and either day or weekday are the strongest. However, there are interdependence issues with a few of the variables. As a result, I am taking out "avg.blkbin.month", "avg.blk.month",  and "avg.distbin.month". 
+
+#  Model
 *Describe your modeling approach and show how you arrived at your final
 model.*
 
-``` {r model}
+To **partition** the dataset, we split the model by 75% for training and 25% for testing purposes. The partition is at the beginning of Quarter 2 (April 1st). 
+
+
+``` {r partition}
+
+path = "C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/sfpark_clean_data.parquet"
+# write_parquet(
+#   park.import,
+#   path
+# )
+
+park.import = read_parquet(path)
+
+vars = c( 
+  "t.hrs.occ", "t.hrs.tot", "t.pct.occ", "bin",
+  "avg.blk.day", 
+  "avg.blk.weekday", #"avg.blk.month", 
+  "avg.blkbin.weekday", 
+  #"avg.blkbin.month", 
+  "avg.distbin.day", "avg.distbin.weekday", #"avg.distbin.month", 
+  "lag.blkbin.1bin", "lag.blkbin.1day", "lag.blkbin.week", 
+  "quad", "households_car_pct", "Med_Inc", "Percent_White"
+  )
+
+vars = c(
+  "occ50", 'id.block', 'quad', 'bin', 'day.week', 'avg.blk.day', 'avg.blk.weekday', 'avg.distbin.day', 'avg.distbin.weekday', 'avg.blkbin.weekday', 'households_car_pct', 'Med_Inc', 'Percent_White', 'lag.blkbin.1bin', 'lag.blkbin.1day', 'lag.blkbin.week', 'id.dist'
+         )
+
+partition_day = ymd('2019-04-01')
+park.import$dataset = 'Train'
+park.import[park.import$date < partition_day, 'dataset'] = 'Test'
+
+park.train = park.import %>% filter(dataset == 'Train') %>% dplyr::select(vars)
+park.test = park.import %>% filter(dataset == 'Test') %>% dplyr::select(vars)
+
+
 ```
 
-# 4. Validation / Goodness of Fit
+Surprisingly, based on the table below, the Testing dataset of Q2-Q4 is exactly 75% of the data and the occupation rate appears to not be too different.  
+
+``` {r comp_tab, results='asis'}
+
+
+tab = 
+  describeBy(
+    park.import  %>% 
+      dplyr::select(t.pct.occ, dataset),
+    group='dataset', mat = TRUE,
+    na.rm = TRUE
+  ) %>%
+  as.data.frame() %>%
+  #filter(item>3) %>%
+  arrange(desc(item)) %>%
+  dplyr::select(-item, -vars) %>%
+  tail(., -2) #%>%
+  # arrange(fct_relevel(group1, c('9a to 12p','12p to 3p','3p to 6p')))
+
+rownames(tab) = NULL
+
+tab %>%
+  transmute(
+    `Dataset` = group1,
+    `Time Covered` = c('Apr - Dec','Jan - Mar'),
+    Count = c(nrow(park.train), nrow(park.test)) %>% format(., big.mark=','),
+    `% of All` = percent_formatter(c(nrow(park.train)/ nrow(park.import), nrow(park.test)/ nrow(park.import)) , n=0),
+    Mean = mean %>% percent_formatter(., n=1),
+    Median = median  %>% percent_formatter(., n=1),
+    SD = sd %>% percent_formatter(.),
+    Min = min %>% percent_formatter(.),
+    Max = max %>% percent_formatter(.)
+  ) %>% 
+  kable(title = 'Parking Meter Occupation Rate') %>%
+  kable_styling()
+
+rm(park.import)
+
+```
+
+### Model 1 -- All Blocks
+
+For the first model, we are only looking at 4 basic predictor variables for the entire city. This is largely due to the dataset size. But it will also give an opportunity to focus. 
+
+```{r lm_all}
+# # TIME
+
+lm.all.time_location =
+  glm(
+    occ50 ~ bin + day.week + quad + avg.blkbin.weekday,
+    data=park.train,
+    family="binomial" (link="logit")
+    )
+gc()
+
+```
+One of the main reasons our team uses a binomial logistic regression is to evaluate the odds of a highly demanded parking block. So this linear model summary includes the odds ratio, which suggests the following options:
+
+1. OR < 1 - suggests that the variable is associate with lower odds of high demand parking (+50%)
+
+2. OR > 1 - suggests that the variable is associate with higher odds of high demand parking (+50%)
+
+3. OR = 1 - suggests that the variable doesn't affect the odds
+
+
+``` {r summ_table, results='asis'}
+
+dv = 'occ50'
+
+col_mae = function(column) column %>% abs(.) %>% mean(., na.rm=T)
+col_mape = function(column.res, column.actual) abs(column.res/column.actual) %>% mean(., na.rm=T)
+library(generics)
+#aug_lm = augment(lm.all.time_location)
+
+park.train =
+  park.train %>%
+  na.omit() %>%
+  mutate(
+    occ50.predict   = predict(lm.all.time_location, .))
+
+Category = c(
+  '',
+  'Time Period',
+  'Time Period',
+  'Day of\nthe Week',
+  'Day of\nthe Week',
+  'Day of\nthe Week',
+  'Day of\nthe Week',
+  'City Quadrant',
+  'City Quadrant',
+  'City Quadrant',
+  'Average\nBlock & Bin'
+)
+
+path = "C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/park_all_summary.parquet"
+park.all.summ.CI = read_arrow(path) %>%
+  cbind(
+    Category = Category,
+    .
+  )
+
+# park.all.summ =
+#   lm.all.time_location %>%
+#   tidy() %>%
+#   filter(!grepl("id.dist",term)) %>%
+#   mutate(
+#     Variable = term,
+#     Estimate = round_thresh(estimate, thresh = .0001, digits=4),
+#     std.error = round_thresh(std.error, thresh = .0001, digits=4),
+#     t.value = round_str(statistic, 2),
+#     p.value = p.value %>% round_thresh()
+#   ) %>%
+#   dplyr::select(Variable, Estimate, std.error, t.value, p.value)
+# 
+# park.all.CI =
+#   exp(
+#     cbind(
+#       OR = coef(lm.all.time_location),
+#       confint(lm.all.time_location)
+#       )
+#     ) %>%
+#   round(3) %>%
+#   as.data.frame()
+# park.all.CI$Variable = rownames(park.all.CI)
+# 
+# park.all.summ.CI =
+#   park.all.summ %>%
+#   merge(
+#     .,
+#     park.all.CI,
+#     on='Variable',
+#     sort = FALSE
+#   )
+# 
+# path = "C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/park_all_summary.parquet"
+# park.all.summ.CI %>% write_arrow(path)
+
+# rm(park.all.CI)
+# rm(park.all.summ)
+
+
+
+cols = colnames(park.all.summ.CI)
+#park.all.summ.CI = 
+  park.all.summ.CI %>%
+  mutate(
+    Estimate = Estimate %>% as.numeric() %>% round(2),
+    std.error = std.error %>% as.numeric() %>% round(2),
+    OR = OR %>% 
+      round_thresh(., int_check = F, commas = T),
+    `2.5 %`=`2.5 %` %>% 
+      round_thresh(., int_check = F, commas = T),
+    `97.5 %`=`97.5 %` %>% 
+      round_thresh(., int_check = F, commas = T)
+  )  %>%
+  flextable(.) %>%
+  theme_vanilla(.) %>%
+  align(., 
+        align = "center", 
+        part = "header") %>%
+  align(., j=3:length(cols), 
+        align = "right", 
+        part = "body") %>%
+  set_table_properties(
+    ., layout='autofit') %>%
+  add_footer_row(
+    ., 
+    values=c("2.5% & 97.5% Confidence Intervals"), 
+    colwidths = c(length(cols))) %>%
+  add_footer_row(
+    ., 
+    values=c("OR = Odds Ratio"), 
+    colwidths = c(length(cols))) %>%
+  merge_v(j = ~Category)
+
+
+```
+
+SO this summary table tells us that the city quadrants tell us the most about whether parking is not in high demand (occupation < 50%). The Days of the Week and time periods oddly are very close to 1 -- suggesting that they alone cannot predict any changes. The extremely high OR of the Average Weekend Occupancy is potent because it is directly providing occupation numbers -- when the others generalized the region or timeframe.
+
+The variable's weakness suggests that this model is too generalized and needs more accuracy.
+
+
+### Model 2 -- Downtown Blocks
+
+The next model takes a more in-depth look into the San Francisco Downtown (Quadrant 4). The reason to refocus is largely due to the size of the data with added variables.
+
+With a smaller focus area, the model can now use more variables. Specifically the lag, census, district ids, and averages. This will provide a more accurate prediction. 
+
+``` {r lm_dwtn}
+
+dwtn_vars = c(
+  "occ50", 'id.dist', #'id.block', 
+  'bin', 'day.week', 
+  'avg.blk.day', 'avg.blk.weekday', 'avg.distbin.day', 'avg.distbin.weekday', 'avg.blkbin.weekday', 
+  'households_car_pct', 'Med_Inc', 'Percent_White', 
+  'lag.blkbin.1bin', 'lag.blkbin.1day', 'lag.blkbin.week'
+         )
+
+park.train.dwtn = park.train %>% 
+      filter(quad == 'NE') %>%
+      dplyr::select(dwtn_vars)
+
+lm.dwtn.all =
+  glm(
+    occ50 ~ .,
+    data=park.train.dwtn,
+    family="binomial" (link="logit")
+    )
+
+```
+
+``` {r lm__d, results='asis'}
+
+park.train.dwtn =
+  park.train %>%
+  filter(quad == 'NE') %>%
+  na.omit() %>%
+  mutate(
+    occ50.predict   = predict(lm.dwtn.all, .))
+
+# lm.dwtn.all %>%
+#   tidy() %>%
+#   transmute(
+#     Variable = term, 
+#     Estimate = percent_formatter(estimate, n = 1),
+#     std.error = percent_formatter(std.error, n=1) ,
+#     t.value = format_nums(statistic),
+#     p.value = p.value %>% round_thresh()
+#   ) %>%
+#   kable(
+#     label = NA,
+#     caption = glue('Training Model Summary'),
+#     align = 'lrrrr') %>%
+#   kable_styling()
+
+gc()
+# path = "C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/lm_dwtn_id.parquet"
+# lm.dwtn.all %>%
+#   tidy() %>% 
+#   write_arrow(., path)
+
+Category = c(
+  '',
+  'Time Period',
+  'Time Period',
+  'Day of\nthe Week',
+  'Day of\nthe Week',
+  'Day of\nthe Week',
+  'Day of\nthe Week',
+  'Average\nBlock',
+  'Average\nBlock',
+  'Average\nDistrict & Bin',
+  'Average\nDistrict & Bin',
+  'Average\nBlock & Bin',
+  'Census',
+  'Census',
+  'Census',
+  'Time Lag',
+  'Time Lag',
+  'Time Lag'
+)
+
+path = "C:/Users/nelms/Documents/Penn/MUSA-508/MUSA508_FINAL_SFPARK/data/park_dwtn_summary.parquet"
+park.dwtn.summ.CI = read_arrow(path) %>%
+  mutate(
+    OR = OR %>% 
+      round_thresh(., int_check = F, commas = T),
+    `2.5 %`=`2.5 %` %>% 
+      round_thresh(., int_check = F, commas = T),
+    `97.5 %`=`97.5 %` %>% 
+      round_thresh(., int_check = F, commas = T)
+  ) %>%
+  cbind(
+    Category = Category,
+    .
+  )
+
+# park.dwtn.summ =
+#   lm.dwtn.all %>%
+#   tidy() %>%
+#   filter(!grepl("id.dist",term)) %>%
+#   mutate(
+#     Variable = term,
+#     Estimate = round_thresh(estimate, thresh = .0001, digits=4),
+#     std.error = round_thresh(std.error, thresh = .0001, digits=4),
+#     t.value = round_str(statistic, 2),
+#     p.value = p.value %>% round_thresh()
+#   ) %>%
+#   dplyr::select(Variable, Estimate, std.error, t.value, p.value)
+# 
+# park.dwtn.CI =
+#   exp(
+#     cbind(
+#       OR = coef(lm.dwtn.all),
+#       confint(lm.dwtn.all)
+#       )
+#     ) %>%
+#   round(3) %>%
+#   as.data.frame()
+# #park.dwtn.CI$Variable = rownames(park.dwtn.CI)
+# 
+# park.dwtn.CI$Variable = rownames(park.dwtn.CI)
+# park.dwtn.CI =
+#   park.dwtn.CI %>%
+#   filter(!grepl("id.dist",Variable))
+# 
+# 
+# park.dwtn.summ.CI =
+#   merge(
+#     park.dwtn.summ,
+#     park.dwtn.CI,
+#     on='Variable',
+#     sort = FALSE
+#   )
+
+# # park.dwtn.summ.CI %>%
+# #   write_arrow(path)
+
+cols = colnames(park.dwtn.summ.CI)
+#park.dwtn.summ.flex = 
+  park.dwtn.summ.CI %>%
+  mutate(
+    Estimate = ifelse(Variable=='Med_Inc',.01,Estimate %>% as.numeric() %>% round(2)),
+    std.error = ifelse(Variable=='Med_Inc',.01,std.error %>% as.numeric() %>% round(2)),
+    t.value = t.value %>% as.numeric() %>% round(0),
+  ) %>%
+  flextable(.) %>%
+  theme_vanilla(.) %>%
+  align(., 
+        align = "center", 
+        part = "header") %>%
+  align(., j=3:length(cols), 
+        align = "right", 
+        part = "body") %>%
+  set_table_properties(
+    ., layout='autofit') %>%
+  add_footer_row(
+    ., 
+    values=c("2.5% & 97.5% Confidence Intervals"), 
+    colwidths = c(length(cols))) %>%
+  add_footer_row(
+    ., 
+    values=c("OR = Odds Ratio"), 
+    colwidths = c(length(cols))) %>%
+  merge_v(j = ~Category)
+
+```
+
+The summary table for the second model suggests that it is more accurate. Some averages provide heavier predictions -- such as the Average Block Occupancies. But many sit just around an OR of 1. 
+
+### Compare Models
+
+A higher degrees of freedom suggests a larger number of parameters used by the fitting procedure. Combined with the larger number of variables used, the Downtown Model is more complex.
+
+``` {r comp_table, results='asis'}
+
+
+park.all.glance = 
+  lm.all.time_location %>% glance()
+
+park.dwtn.glance = 
+  lm.dwtn.all %>% glance()
+
+
+park.BOTH.glance = 
+  rbind(
+    park.all.glance,
+    park.dwtn.glance
+  )
+
+park.AIC = AIC(lm.all.time_location, lm.dwtn.all)
+
+cols = colnames(park.AIC)
+#park.AIC.flex = 
+  park.AIC %>%
+  transmute(
+    `Training\nModel` = c('All Blocks', 'Downtown Blocks'),
+    Variables = c(4,14),
+    `Observations` = c(nrow(park.train), nrow(park.train.dwtn)) %>% format(big.mark=','),
+    AIC = AIC %>% round(0) %>% format(big.mark=',', nsmall = 0, justify='right'),
+    `Degrees of\nFreedom` = df
+  ) %>%
+  flextable(.) %>%
+  theme_vanilla(.) %>%
+  align(., 
+        align = "center", 
+        part = "header") %>%
+  align(., j=2:5, 
+        align = "right", 
+        part = "body") %>%
+  set_table_properties(
+    ., layout='autofit') %>%
+  add_footer_row(
+    ., 
+    values=c("Akaike Information Criterion"), 
+    colwidths = c(length(cols))+3)
+
+```
+
+# Validation / Goodness of Fit
+
+The AIC statistic only suggests that the Downtown model has comparatively less predictive error than the original All Blocks model. To determine the true predictive nature of our binomial logistic model, we will:
+
+1. Determine the **Cut-Off** threshold of how to label the outcomes of our predicted dependent variables,
+
+2. Evaluate the **Specificity, Sensitivity, & Misclassification** rates,
+
+3. Use a **ROC Curve** to determine the quality of our fit, then
+
+4. **Cross-Validate** the model.
+
+Because the Downtown Model outperformed the first All Blocks model, the following goodness of fit metrics will primarily evaluate the Downtown Model
+
+``` {r function_}
+
+get_cut_off_values = function(
+  focus_dv = 'occ50',
+  focus_df = park.train.dwtn,
+  focus_glm = lm.dwtn.all,
+  cut_off = 0.05
+){
+  fit = focus_glm$fitted.values
+  
+  #a is a matrix combining the vectors containing y and y-hat in matrix a; first variable is
+  #DRINKING_D, which is y; second variable is fit, which is y-hat
+  a = cbind(
+    focus_df[[focus_dv]],
+    fit
+    )
+  
+  #b is matrix a, just sorted by the variable fit
+  b = a[order(a[,2]),]
+  
+  #Calculating variable c which is 1 if y-hat (second column of matrix b) is greater
+  #than or equal to 0.05 and 0 otherwise.
+  
+  #Other cut-offs can be used here!
+  
+  cut_offs = c(cut_off)
+  
+  c = (b[,2] >= cut_offs[1])
+  c_colnames = glue("Prob.Above{str_remove(cut_offs[1], '^0+')}")
+  
+  if (length(cut_offs)>1){
+    for (
+      current_cut_off in cut_offs[2:length(cut_offs)]
+      ){
+      c = cbind(
+        c,
+        (b[,2] >= current_cut_off)
+        )
+      current_cut_off = current_cut_off %>% str_remove(., "^0+")
+      c_colnames = 
+        c(c_colnames, glue("Prob.Above{current_cut_off}"))
+      }}
+  
+  #Creating matrix d which merges matrixes b and c
+  d = cbind(b,c)
+  
+  #Let's label the columns of matrix d for easier reading
+  colnames(d) = c(
+    glue("Observed.{focus_dv}"),
+    glue("Probability.{focus_dv}"),
+    c_colnames
+    )
+  
+  #Converting matrix to data frame
+  e = as.data.frame(d)
+  
+  return(e)
+}
+
+get_sens_spec_miss = function(
+  cut_off = cut_off_list[1],
+  focus_dv = 'Observed.occ50',
+  focus_df = cut_off_values
+){
+  str_cut_off = cut_off %>% str_remove(., "^0+")
+  focus_cut_off = glue("Prob.Above{str_cut_off}")
+  focus_formula = as.formula(glue("~ {focus_cut_off} + {focus_dv}"))
+  focus_dv_cut_off = xtabs(formula=focus_formula, data=focus_df) %>% as.matrix()
+  a = focus_dv_cut_off[1]
+  b = focus_dv_cut_off[3]
+  c = focus_dv_cut_off[2]
+  d = focus_dv_cut_off[4]
+  
+  Sensitivity = d/(b+d)
+  Specificity = a/(a+c)
+  Misclassification = (b+c)/(a+b+c+d)
+  
+  return(data.frame(
+    Cut_Off = cut_off,
+    Sensitivity = Sensitivity,
+    Specificity = Specificity,
+    Misclassification = Misclassification
+  ))
+}
+
+
+```
+
+## Determine Cut-Off Threshold
+
+Our testing model only gave us the probability of predicting that the parking meter occupations are above 50%. That probability, needs a *cut-off threshold* that labels its binomial outcome. The threshold will never perfectly divide the predictions into their observed outcomes. 
+
+To determine this misclassification rate, we first run the testing model on the training dataset to find predictive values. With those predictions of Meters above 50% *and* observations, we can find misclassification rates with hypothetical cut-offs. 
+
+The table below shows proposed cut-off thresholds along with their Sensitivity (True Positive Rate), Specificity (True Negative Rate), and Misclassification rate (combined False Positive & Negative Rate). Initially it seems best to pick the threshold with the least misclassification (50%), but it would be best to pick a threshold that produces higher correct predictions -- highest possible Sensitivity *and* Specificity.
+
+Using a function that finds where the Sensitivity and Specificity rates intersect, we find that the optimum cut-off threshold is 40.4%. 
+
+``` {r mode_comp, results='asis'}
+
+# lm.dwtn.all$labels
+# 
+library(ROCR)
+
+focus_dv = 'occ50'
+focus_df = park.train.dwtn
+focus_glm = lm.dwtn.all
+
+focus.ROC = cbind(focus_df[[focus_dv]], focus_glm$fitted.values) %>%
+  as.data.frame()
+colnames(focus.ROC) = c("labels","predictions")
+
+
+pred = prediction(focus.ROC$predictions, focus.ROC$labels)
+
+ROC.perf = performance(pred, measure = "tpr", x.measure="fpr")
+
+####
+
+opt.cut = function(perf, pred){
+  cut.ind = mapply(FUN=function(x, y, p){
+    d = (x - 0)^2 + (y-1)^2
+    ind = which(d == min(d))
+    c(sensitivity = y[[ind]], 
+      specificity = 1-x[[ind]], 
+      cutoff = p[[ind]])
+  }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+
+cut_off_opt_df = opt.cut(ROC.perf, pred) %>% 
+  t() %>% as.data.frame()
+cut_off_opt = cut_off_opt_df$cutoff
+
+
+cut_off_list = c(0.01, 0.10, 0.25, 0.50, .75, .90)
+cut_off_list = c(cut_off_list,cut_off_opt)
+cut_off_values = get_cut_off_values(
+  cut_off = cut_off_list)
+
+
+park.dwtn.cutoff = get_sens_spec_miss(
+  focus_df = cut_off_values,
+  cut_off=cut_off_list[1])
+
+for (curr_cut_off in cut_off_list[2:length(cut_off_list)]){
+      park.dwtn.cutoff = rbind(
+        park.dwtn.cutoff,
+        get_sens_spec_miss(
+          focus_df = cut_off_values,
+          cut_off = curr_cut_off)
+      ) %>% as.data.frame()
+      row.names(park.dwtn.cutoff) = NULL}
+park.dwtn.cutoff = 
+  park.dwtn.cutoff %>% 
+  round(3) %>% arrange(Cut_Off) %>%
+  mutate(
+    Cut_Off = sub("0+$", "", as.character(Cut_Off)) %>%
+      str_remove(., "^0+")
+  )
+
+cols = colnames(park.dwtn.cutoff)
+new_cols = setNames(
+  replace(cols, cols=='Cut_Off', 'Cut-Off Value'), 
+  cols)
+
+#park.dwtn.cutoff.flex = 
+  park.dwtn.cutoff %>%
+  mutate(Cut_Off = 
+           ifelse(Cut_Off=='.404',
+                  '40.4%*',
+                  Cut_Off %>% 
+                    as.numeric() %>%
+                    percent_formatter()
+                  ),
+         Sensitivity = Sensitivity %>% 
+                    as.numeric() %>%
+                    percent_formatter(n=1),
+         Specificity = Specificity %>% 
+                    as.numeric() %>%
+                    percent_formatter(n=1),
+         Misclassification = Misclassification %>% 
+                    as.numeric() %>%
+                    percent_formatter(n=1)
+         ) %>%
+  flextable(., col_keys = cols) %>%
+  set_header_labels(
+    ., 
+    values = new_cols) %>%
+  theme_vanilla(.) %>%
+  align(., 
+        align = "center", 
+        part = "header") %>%
+  align(., j=2:length(cols), 
+        align = "right", 
+        part = "body") %>%
+  align(., j=1, 
+        align = "center", 
+        part = "body") %>%
+  set_table_properties(
+    ., layout='autofit') %>%
+  bg(., i = ~ Cut_Off == '40.4%*', bg = "wheat", part = "body") %>%
+  add_footer_row(
+    ., 
+    values=c("* Optimium Cut-Off"), 
+    colwidths = c(length(cols)))
+
+
+```
+
+
+
+The *confusion matrix* for the threshold of .404 (below) highlights the True/False Negative/Positive rates that form the previously discussed rates. Our True Negatives (a) and Positives (b) are fairly high -- which is a good sign of our model's accuracy. 
+
+```{r confusion_matrix, results='asis'}
+
+
+park.test.dwtn = data.frame(
+  id.block = park.test %>% 
+    filter(quad=='NE') %>% na.omit() %>% 
+    pull(id.block) %>% as.factor(.),
+  bin = park.test %>% 
+    filter(quad=='NE') %>% na.omit() %>% 
+    pull(bin) %>% as.factor(.),
+  occ50 = park.test %>% 
+    filter(quad=='NE') %>% na.omit() %>% 
+    pull(occ50) %>% as.factor(.),
+  occ50.predict.pct = predict(
+    lm.dwtn.all, 
+    park.test %>% 
+    filter(quad=='NE') %>% na.omit(), 
+    type= "response")
+  ) %>%
+  mutate(
+    occ50.predict  = 
+      as.factor(
+        ifelse(
+          occ50.predict.pct > cut_off_opt,
+          TRUE, 
+          FALSE
+          )))
+testlen = nrow(park.test.dwtn)
+park.text.dwtn.mx = caret::confusionMatrix(
+  park.test.dwtn$occ50.predict, 
+  park.test.dwtn$occ50) %>% 
+  as.matrix(., what = "xtabs") %>%
+  as.data.frame() %>%
+  transmute(
+    Results = c('Predicted\nOutcome'),
+    Outcome = c("Below 50%\n(FALSE)","Above 50%\n(TRUE)"),
+    `Below 50%\n(FALSE)` = (`FALSE`/testlen) %>% percent_formatter() %>%
+      paste(c('(a)','(c)'), ., sep=' '),
+    `Above 50%\n(TRUE)` = (`TRUE`/testlen) %>% percent_formatter() %>%
+      paste(c('(b)','(d)'), ., sep=' ')
+  )
+rownames(park.text.dwtn.mx) = NULL
+
+rename_cols = setNames(
+  c("", "", "Below 50%\n(FALSE)", "Above 50%\n(TRUE)" ), 
+  colnames(park.text.dwtn.mx))
+
+
+park.text.dwtn.mx %>%
+  flextable(.) %>%
+  theme_vanilla(.) %>%
+  align(., 
+        align = "center", 
+        part = "header") %>%
+  align(., j=2:4, 
+        align = "center", 
+        part = "body") %>%
+  align(., j=1, 
+        align = "center", 
+        part = "body") %>%
+  set_table_properties(
+    ., layout='autofit') %>%
+  merge_v(j = ~Results) %>%
+  set_header_labels(
+    ., 
+    values = rename_cols) %>%
+  add_header_row(
+    ., 
+    values = c('', 'Observed Outcome'), 
+    colwidths = c(2,2)) %>%
+  bold(., i = 1:2, j = 1:2, bold = TRUE, part = "body") %>%
+  add_footer_row(
+    ., 
+    values=c("Specificity =  a/(a+c)\nSensitivity =  d/(d+b)\nMisclassification Rate =  (b+c)/(a+b+c+d)"), 
+    colwidths = c(4))
+
+
+#   False Negative      True Negative
+## Ref  No Click      Ref   Click
+## Pred No Click      Pred  No Click
+
+#   False Positive      True Positive
+## Ref  No Click      Ref   Click
+## Pred Click         Pred  Click
+
+```
+The **Predicted Probabilities graph** below provides a visual of the confusion matrix. The True Negatives (left side of the bottom, blue curve) are accurately predicting occupancy rates (forming 50% of total observations) -- which can be seen in the curve peaking at a prediction rate of 10%. The True/False Positives (top, red curve) are more concerning as there isn't a distinct peak to the right of the threshold. As a result, there are more False Positives (12% of total) which suggests our model does not have enough predictor variables that account for peaks of high meter occupancy.
+
+``` {r plotp}
+
+auc.perf = performance(pred, measure ="auc")
+AUC = auc.perf@y.values[[1]] %>% round(4)
+
+palette2 = c("#981FAC","#FF006A")
+
+ggplot() + 
+  # geom_density(
+  #   data=focus.ROC,
+  #   aes(x = predictions, group=labels), 
+  #   fill='grey90', color='black', lwd=1.5
+  #   ) +
+  geom_density(
+    data=focus.ROC %>%
+      mutate(
+        labels = ifelse(
+          labels==1,
+          'Above 50% Occupancy',
+          'Below 50% Occupancy'
+      )),
+    aes(x = predictions, group=labels, fill=labels, color=labels),
+    fill='grey90', lwd=1.25 #, color='orange'
+    # linetype='dashed'
+    ) +
+  facet_grid(labels ~ .) +
+  scale_fill_manual(values = palette2) +
+  labs(
+    x = "Probability", 
+    y = "Density of Probabilities",
+    title = "Predicted Probabilities - Downtown Model",
+    subtitle = glue("Optimal Cut-Off Rate = {cut_off_opt %>% percent_formatter(n=1)}  (dashed line)")
+    ) + 
+  scale_x_continuous(
+    labels = function(num) num %>% percent_formatter(),
+    name="Probability") + 
+  geom_vline(xintercept=cut_off_opt,
+             linetype='dashed') + 
+  theme(strip.text.x = element_text(size = 18),
+        legend.position = "none") + 
+  plotTheme()
+#dev.off()
+
+```
+
+
+## ROC Curve
+
+The ROC curve is a goodness-of-fit plot of the true positive rate (i.e., sensitivity) against false positive rate (i.e., specificity). A curve at a 45 degree angle (i.e. just a diagonal line) suggests the model is inaccurate. A curve with a perfect 90 degree angle would be very predictive but is likely the result of over fitting. In the chart below, our curve's bow shape is a good sign that our model is accurately predicting without over-fitting. 
+
+The area under our model’s ROC curve is 0.88. An AUC value that falls in the 0.60-0.70 range is considered poor. This tells us that our model is fairly accurate. 
+
 
 ``` {r fit}
+
+#library(rROC)
+
+library(plotROC)
+
+ggplot() +
+  geom_roc(
+    data = focus.ROC, 
+    aes(d = labels, m = predictions),
+    n.cuts = 50, labels = FALSE, colour = "#000000") +
+  # geom_roc(
+  #   data = test.predict, 
+  #   aes(d = as.numeric(test.predict$outcome), m = predict.2),
+  #   n.cuts = 50, labels = FALSE, colour = "#FE9900") +
+  style_roc(theme = theme_grey) +
+  geom_abline(slope = 1, intercept = 0, size = 1.5, color = 'grey') +
+  labs(
+    title = "ROC Curve - Downtown Model",
+    subtitle = glue("Area Under Curve = {AUC}")
+    )
+
 ```
 
-## 4.1 CV
-*Validate your model with cross-validation and describe how your predictions
-are useful (accuracy vs. generalizability).*
+## CV
 
-## 4.2 Map & Visualizations
-*Provide additional maps and data visualizations to show that your model is
-useful.*
+
+```{r cv}
+library(caret)
+
+park.train.dwtn.prep = 
+  park.train.dwtn %>%
+      dplyr::select(dwtn_vars) %>%
+      mutate(occ50 = ifelse(occ50==TRUE, "ABOVE50", "BELOW50"))  %>%
+  na.omit()
+park.train.dwtn.prep$occ50 = park.train.dwtn.prep$occ50 %>% as.factor() 
+
+# control CV parameters
+ctrl = trainControl(
+  method = "cv", 
+  number = 100, 
+  classProbs=TRUE,
+  summaryFunction=twoClassSummary #(data=park.train.dwtn.prep, lev=c(1,0))
+  )
+
+form = colnames(park.train.dwtn.prep)
+form = form[form!='occ50'&form!='id.dist']
+#form = paste(form, collapse=' + ') %>% paste('occ50', ., sep=' ~ ') %>% as.formula()
+library(pROC)
+# cv LM
+park.cv.dwtn = caret::train(
+  x = park.train.dwtn.prep %>% dplyr::select(form),
+  y = park.train.dwtn.prep$occ50,
+  method="glm", 
+  family="binomial",
+  metric="ROC", 
+  trControl = ctrl
+  )
+
+```
+
+
+
+``` {r cv_hist}
+
+dplyr::select(park.cv.dwtn$resample, -Resample) %>%
+  gather(metric, value) %>%
+  left_join(gather(park.cv.dwtn$results[2:4], metric, mean)) %>%
+  ggplot(aes(value)) + 
+    geom_histogram(bins=35, fill = "#FF006A") +
+    facet_wrap(~metric) +
+    geom_vline(aes(xintercept = mean), colour = "#981FAC", linetype = 3, size = 1.5) +
+    #scale_x_continuous(limits = c(0, 1)) +
+    labs(x="Goodness of Fit", y="Count", title="Cross Validation -- Measure Goodness of Fit",
+         subtitle = "Comparing Observed Training Results to k-fold permutations")
+
+```
+
+## Map
+
+This map displays the misclassification rate of the Downtown model. It helps the team evaluate which geographic areas are being misclassified. It appears that blocks with heavier occupations also have higher missclassifications. This aligns with the Test model summary and ROC results that we are predicting better for lower occupancies and not higher occupancies. 
+
+``` {r EDA_map_dwntn}
+#SF.quad.labels = sf_to_labels(SF.quad, 'quad') %>% dplyr::filter(label=='NE')
+SF.dist.labels = sf_to_labels(
+  SF.dist %>% arrange(quad) %>% 
+    dplyr::filter(quad=='NE') %>%
+    dplyr::filter(!PM_DISTRICT_NAME  %in% c(
+      'Polk', 'Telegraph Hill'
+    )), 'PM_DISTRICT_NAME') %>%
+  mutate(label = 
+    ifelse(
+      label == 'N.Beach-Chinatown',
+      'N.Beach\n\nChinatown',
+    ifelse(
+      label == "Fisherman's Wharf",
+      "\nFisherman's Wharf",
+           label)
+      ) #%>% gsub(' ','\n', ., fixed = TRUE)
+    )
+
+park.map = 
+  park.test.dwtn %>% 
+    dplyr::group_by(id.block, occ50, occ50.predict) %>%
+    dplyr::summarize(
+      count = n()
+    ) %>%
+  mutate(
+    Outcome = 
+      case_when(
+        occ50 == TRUE & occ50.predict == TRUE ~ 'True Positive',
+        occ50 == TRUE & occ50.predict == FALSE ~ 'False Negative',
+        occ50 == FALSE & occ50.predict == TRUE ~ 'False Positive',
+        occ50 == FALSE & occ50.predict == FALSE ~ 'True Negative'
+      )
+  ) %>% ungroup() %>%
+  dplyr::select(id.block,Outcome,count) %>% 
+  dcast(., id.block~Outcome, fill=0) %>%
+  mutate(
+    Misclassification = (`False Negative` + `False Positive`) / 
+      (`False Negative` + `False Positive` + `True Negative` + `True Positive`)
+  ) %>% 
+  merge(
+    .,
+    park.blocks,
+    on='id.block'
+  ) %>%
+  st_sf() %>%
+  st_buffer(50)
+
+#park.map$bin = factor(park.map$bin, levels = c("All","9a to 12p", "12p to 3p", "3p to 6p"))
+# park.map$day.week = factor(
+#   park.map$day.week,
+#   levels = 
+#     c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+sep = 10000
+ggplot()+
+  geom_sf(
+    data = SF.quad %>% 
+      dplyr::filter(quad=='NE'), color = 'transparent', fill='grey90'
+  ) +
+  geom_sf(data = park.map,
+          aes(fill = Misclassification), #, size=meters.count), 
+          color = "transparent", alpha = 0.95
+          ) +
+  geom_text_sf(
+    SF.dist.labels, check_overlap = TRUE,
+    
+    #hjust = "top"#, vjust = "outward"
+    ) + 
+  xlim(min(SF.dist.labels$lon)-sep, max(SF.dist.labels$lon)+sep) + 
+  scale_fill_gradientn(
+    colors = RColorBrewer::brewer.pal(5, "YlOrRd"),
+    values = c(0,.45,.65,.85,1),
+    labels = function(tstr) percent_formatter(tstr)
+    #direction = -1, discrete = FALSE, option = "D"
+    )+
+  guides(fill = guide_colourbar(barwidth = 2)) + 
+  #facet_wrap(~bin, ncol = 2)+
+  labs(
+    title='Testing Set Misclassification Rate',
+    subtitle = 'San Francisco, 2019'
+    )+
+  mapTheme
+geom_text()
+
+```
+
+
+
 
 # Conclusion
 ## Use Case Results
-*Talk about how your analysis meets the use case you set out to address.*
+
+*Like any good Silicon Valley app,* our app is promising in theory but a devil's errand in reality. The app's ability to predict open parking spots hinges on the a single city's uncleaned dataset. Regardless, the second, downtown model appeared to provide a rough estimation of which blocks are more occupied in a given area or time. Our final application would simply take in the list of blocks and their predicted odds. 
 
 ## Improvements
-*What could you do to make the analysis better?*
+
+Before the app goes to market, I believe there are large gaps for improvement, specifically for the:
+
+1. **Dependent Variable**
+It would be better to determine the *probability that a single parking spot is open*. A block could have a low average occupation rate but only have 2 parking spots -- that could get filled up. This would require a heavier amount of cleaning and a different model.
+
+At the same time, the meter data only provides parking space times that have metered transactions. The city still has a large amount of illegal parking and free neighborhood parking. 
+
+2. **Model Type**
+The app's focus on finding a single parking spot suggests it would be better to look at the probability of 1 or 2 spots being open. A Temple-based spatial statistics professor suggested to the team that a *ordinal logistic regression model* could find the probability of 0, 1, or 2+ spots being open. The model's added complexity is, however, outside the confines of this app development team's current timeline and pay grade. 
+
+3. **Improved Data Cleaning**
+The cleaned parking meter transactions provide an average occupancy rate (~42%) that feels tremendously lower than anecdotal evidence or SFMTA's pricing rates (which suggest 60-80% occupancy). Overall the parking dataset is large and murky. Many transaction appear to be administrative (e.g. parking transaction from midnight to 10am) but there isn't a column describing this transaction. If the app garners public support, SFMTA could provide the team with a cleaner dataset. 
+
+4. **Improved Predictor Variables**
+The model had a lower AIC score and a promising ROC Curve, but the relatively low True Positive Rate suggests that the model is more ambiguous at predicting higher occupancy parking meters. Some helpful predictor variables that could predict high demand are: event times & locations, commercial center locations, and San Francisco landmarks. Another set of predictors are the location of free on-street parking spaces and paid off-street parking spots.
+
+5. **Enlarging Study Area & City**
+The final model only looked at Downtown San Francisco and at metered spots. IF we had the data for non-metered parking spots, the app user would benefit in not having to spend money. 
+
+
+
+
+

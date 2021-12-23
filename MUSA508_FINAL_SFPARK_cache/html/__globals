@@ -1,0 +1,41 @@
+intro	$<-	%>%	&	.	::	[[	~	<	==	>	>=	abs	aes	as.character	as.numeric	c	count_format	element_blank	element_line	element_rect	element_text	format	geom_text	geometry	if	ifelse	is.na	is.null	label	lat	library	lon	map_dbl	margin	mutate	paste	paste0	return	round	st_centroid	st_crs	str_remove	str_replace	theme	unit
+data_block_group	%>%	::	==	bin	block_day_bin	block_id	date	datetime	day	day of week	dist_id	filter	glimpse	group_by	id.bdb	id.block	ifelse	max	meter_count	meter_ids	meters.list	min	month	mutate	occ_hours	occ_perc	pull	read_parquet	rm	tot_hours	transmute	week
+data_meter	!	$	%>%	&	::	filter	geometry	id.block	is.na	merge	quad	rename	sf_crs	sfpark_id	st_drop_geometry	st_intersects	st_join	st_read	st_transform	T
+data_census	!=	$	%>%	.	::	arrange	as.data.frame	c	correlation_table	data.table	distinct	filter	GEOID	geometry	households_car_pct	id.bdb	id.block	kable	kable_styling	left_join	Med_Inc	na.omit	park.blocks	park.import	Percent_White	rename	rm	sf_crs	st_drop_geometry	st_intersects	st_join	st_read	st_sf	st_transform	t.pct.occ	Variable
+import_weather	!=	$	%>%	.	::	==	arrange	correlation_table	date	datetime	filter	id.bdb	id.block	ifelse	interval60	is.na	kable	kable_styling	left_join	max	mutate	na.omit	p01i	park.import	Precipitation	read_arrow	rename	replace	rm	sknt	substr	sum	t.pct.occ	Temperature	tmpf	valid	Variable	Wind_Speed	ymd_h
+data_park	!	%>%	::	c	group_by_at	mean	mutate	park.import	starts_with	t.pct.occ	ungroup
+EDA_corr_avg	!=	$	%>%	::	arrange	as.tibble	avg.bin.day	avg.bin.month	avg.bin.weekday	c	cbind	colnames<-	correlation_table	filter	kable	kable_styling	rm	starts_with	str_split_fixed	Variable
+data_time_lag	!=	%>%	.	::	==	>	arrange	bin	c	date	datetime	first.bin	id.bdb	id.block	ifelse	lag	lag.blkid.week	left_join	mutate	park.import	paste	rename	rm	starts_with	str_pad	T	t.pct.occ	yday
+eda_lag	!=	%>%	::	arrange	c	correlation_table	filter	kable	kable_styling	mutate	park.lag	starts_with	t.pct.occ	Variable
+data_weather_join	%>%	.	::	arrange	data.table	distinct	first.bin	first.date	id.block	last.bin	last.date	left_join	merge	park.avg	park.census	park.lag	rm	t.pct.occ
+EDA_table_b	$	$<-	%>%	.	::	[<-	>=	add_header_above	arrange	as.data.frame	bin	c	desc	describeBy	fct_relevel	group1	item	kable	kable_styling	max	mean	median	min	n	percent_formatter	rownames<-	sd	t.pct.occ	tail	transmute	vars
+EDA_table	%>%	.	::	as.character	format	group_by	kable	kable_styling	mutate	n	nrow	occ50	park.import	Parking
+Above 50%
+Occupied	percent_formatter
+Above 50%
+Occupied	percent_formatter
+EDA_hist	%>%	..density..	aes	geom_density	geom_histogram	ggplot	labs	park.import	percent_formatter	scale_x_continuous	t.pct.occ	theme_minimal
+EDA_timeseries	%>%	.data	::	[[	aes	c	element_blank	geom_line	ggplot	glue	group_by	labs	list	max	min	park.import	percent_formatter	plot_annotation	plot_layout	plotTheme	scale_y_continuous	sum	t.hrs.occ	t.hrs.tot	t.pct.occ	theme	wrap_plots	xlim
+EDA_table_weekday	$	$<-	%>%	.	as.character	bin	c	collapse_rows	Count	day.week	factor	format	group_by	kable	kable_styling	mean	Mean	meters.count	percent_formatter	rownames<-	sum	summarise	T	t.pct.occ	transmute	ungroup
+plot_time_weekday	$	$<-	%>%	.	[[	==	aes	annotate	as.character	bin	c	day.week	element_text	fct_cross	geom_line	ggplot	group_by	id	ifelse	labs	lapply	library	mean	Mean	meters.count	mutate	park.import	paste	percent_formatter	plotTheme	quad	Quadrant	return	row_number	scale_x_discrete	scale_y_continuous	str_replace	str_trim	strsplit	sum	summarise	T	t.pct.occ	theme	ungroup	unique	unlist	week_bin
+EDA_map	$	$<-	%>%	.	::	~	aes	bin	c	facet_wrap	factor	geom_sf	geom_text_sf	ggplot	guide_colourbar	guides	id.block	labs	mapTheme	mean	merge	meters.count	park.blocks	park.import	percent_formatter	rev	scale_fill_gradientn	SF.quad	sf_to_labels	st_buffer	st_sf	sum	T	t.pct.occ	theme
+EDA_map_dwtn_1	!	$	$<-	%>%	.	::	~	==	aes	arrange	bin	c	facet_wrap	geom_sf	geom_text	geometry	ggplot	guide_colourbar	guides	id.block	ifelse	label	labs	lat	lon	mapTheme	mean	merge	mutate	park.blocks	park.import	percent_formatter	PM_DISTRICT_ID	PM_DISTRICT_NAME	quad	read.csv	rev	scale_fill_gradientn	SF.quad	sf_crs	sf_to_labels	st_as_sfc	st_buffer	st_join	st_sf	st_transform	T	t.pct.occ	theme
+EDA_avg_tabs	%>%	.	::	as.data.frame	c	cbind	collapse_rows	glue	kable	kable_styling	max	mean	min	park.import	percent_formatter	rownames	rownames<-	sd	transmute
+EDA_avg_lag	%>%	.	::	as.data.frame	c	cbind	collapse_rows	glue	kable	kable_styling	max	mean	min	park.import	percent_formatter	rownames	rownames<-	sd	transmute
+plot_weather	%>%	.	::	==	aes	date	element_blank	geom_line	ggplot	group_by	ifelse	interval60	is.na	labs	list	map_park	max	mutate	p01i	plot_annotation	plot_layout	plotTheme	Precipitation	read_arrow	replace	rm	sknt	substr	sum	Temperature	theme	tmpf	valid	week	Wind_Speed	wrap_plots	ymd_h
+corr_plot	%>%	.	::	c	cor	labs	na.omit	park.import	plotTheme	rm	round
+partition	$	$<-	%>%	::	[<-	<	==	c	dataset	filter	read_parquet	ymd
+comp_tab	%>%	.	::	arrange	as.data.frame	c	dataset	desc	describeBy	format	group1	item	kable	kable_styling	max	mean	median	min	nrow	park.import	park.test	park.train	percent_formatter	rm	rownames<-	sd	t.pct.occ	tail	transmute	vars
+lm_all	~	binomial	gc	glm	park.train
+summ_table	%>%	.	~	2.5 %	97.5 %	abs	add_footer_row	align	as.numeric	c	cbind	colnames	Estimate	F	flextable	length	library	lm.all.time_location	mean	merge_v	mutate	na.omit	OR	predict	read_arrow	round	round_thresh	set_table_properties	std.error	T	theme_vanilla
+lm_dwtn	%>%	::	~	==	binomial	c	filter	glm	park.train	quad
+lm__d	%>%	.	~	==	2.5 %	97.5 %	add_footer_row	align	as.numeric	c	cbind	colnames	Estimate	F	filter	flextable	gc	ifelse	length	lm.dwtn.all	merge_v	mutate	na.omit	OR	park.train	predict	quad	read_arrow	round	round_thresh	set_table_properties	std.error	T	t.value	theme_vanilla	Variable
+comp_table	%>%	.	add_footer_row	AIC	align	c	colnames	df	flextable	format	glance	length	lm.all.time_location	lm.dwtn.all	nrow	park.train	park.train.dwtn	rbind	round	set_table_properties	theme_vanilla	transmute
+function_	$	%>%	.	[[	>	>=	as.data.frame	as.formula	as.matrix	cbind	colnames<-	cut_off_list	cut_off_values	data.frame	for	glue	if	length	lm.dwtn.all	order	park.train.dwtn	return	str_remove	xtabs
+mode_comp	$	%>%	.	@	[[	^	~	==	add_footer_row	align	arrange	as.character	as.data.frame	as.numeric	bg	c	cbind	colnames	colnames<-	Cut_Off	flextable	for	get_cut_off_values	get_sens_spec_miss	ifelse	length	library	lm.dwtn.all	mapply	min	Misclassification	mutate	park.train.dwtn	percent_formatter	performance	prediction	rbind	replace	round	row.names<-	Sensitivity	set_header_labels	set_table_properties	setNames	Specificity	str_remove	sub	t	theme_vanilla	which
+confusion_matrix	$	%>%	.	::	~	==	>	add_footer_row	add_header_row	align	as.data.frame	as.factor	as.matrix	bin	bold	c	colnames	cut_off_opt	data.frame	FALSE	filter	flextable	id.block	ifelse	lm.dwtn.all	merge_v	mutate	na.omit	nrow	occ50	occ50.predict.pct	park.test	paste	percent_formatter	predict	pull	quad	rownames<-	set_header_labels	set_table_properties	setNames	theme_vanilla	transmute	TRUE
+plotp	%>%	@	[[	~	==	aes	c	cut_off_opt	element_text	facet_grid	focus.ROC	geom_density	geom_vline	ggplot	glue	ifelse	labels	labs	mutate	percent_formatter	performance	plotTheme	pred	predictions	round	scale_fill_manual	scale_x_continuous	theme
+fit	aes	focus.ROC	geom_abline	geom_roc	ggplot	glue	labels	labs	library	predictions	style_roc	theme_grey
+cv	!=	$	$<-	%>%	&	::	==	as.factor	colnames	dwtn_vars	ifelse	library	mutate	na.omit	occ50	park.train.dwtn	trainControl	twoClassSummary
+cv_hist	$	%>%	::	~	aes	facet_wrap	gather	geom_histogram	geom_vline	ggplot	labs	left_join	mean	metric	park.cv.dwtn	Resample	value
+EDA_map_dwntn	!	$	%>%	.	::	~	==	aes	arrange	c	case_when	count	dcast	False Negative	False Positive	geom_sf	geom_text	geom_text_sf	ggplot	guide_colourbar	guides	id.block	ifelse	label	labs	mapTheme	max	merge	min	Misclassification	mutate	n	occ50	occ50.predict	Outcome	park.blocks	park.test.dwtn	percent_formatter	PM_DISTRICT_NAME	quad	scale_fill_gradientn	SF.dist	SF.quad	sf_to_labels	st_buffer	st_sf	True Negative	True Positive	ungroup	xlim
