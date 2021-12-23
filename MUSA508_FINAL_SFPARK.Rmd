@@ -12,6 +12,8 @@ output:
     code_download: true
 ---
 
+[Presentation Video](https://www.youtube.com/watch?v=8w4xsXIoCwo)
+
 ```{r setup, include=FALSE}
 library(bookdown)
 knitr::opts_chunk$set(
@@ -357,7 +359,6 @@ park.import =
 rm(park.first)
 rm(park.last)
 
-glimpse(park.import)
 ```
 
 ### Block Geometry 
