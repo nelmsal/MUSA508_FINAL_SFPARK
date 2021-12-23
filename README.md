@@ -8,10 +8,10 @@
 [pptx](https://github.com/nelmsal/MUSA508_FINAL_SFPARK/blob/main/508%20Final%20Presentation_Alex_Nelms_Gianluca_Mangiapane.pptx)
 
 ## Project Markdown
-md
+[Rmd](https://github.com/nelmsal/MUSA508_FINAL_SFPARK/blob/main/MUSA508_FINAL_SFPARK.Rmd)
 
 ## Project Knit HTML
-html
+[html](https://github.com/nelmsal/MUSA508_FINAL_SFPARK/blob/main/MUSA508_FINAL_SFPARK.html)
 
 ## Data Cleaning Python Notebook
-ipynb
+[ipynb](https://github.com/nelmsal/MUSA508_FINAL_SFPARK/blob/main/Fix_Data3.ipynb)
